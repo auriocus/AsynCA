@@ -3,8 +3,9 @@
  */
 
 //#include "caCmd.h"
-#include <tcl.h>
 #include <cadef.h>
+#undef INLINE /* conflicting definition from Tcl and EPICS */
+#include <tcl.h>
 #include <string.h>
 #include <stdlib.h>
 
@@ -71,21 +72,23 @@ typedef struct {
 	
 	const char *name; /* PV name */
 	
-	Tcl_Obj *connectprefix; 
 	/* Tcl command prefix which is invoked if the connection status changes */
+	Tcl_Obj *connectprefix; 
 } pvInfo;
 
-static pvInfo newpvInfo (chid id, const char *name, Tcl_Obj *prefix) {
-	pvInfo result;
-	result.id=id;
-	result.name=ckstrdup(name);
-	result.connectprefix = prefix;
+static pvInfo *newpvInfo (chid id, const char *name, Tcl_Obj *prefix) {
+	pvInfo *result=ckalloc(sizeof(pvInfo));
+	result->id=id;
+	result->name=ckstrdup(name);
+	result->connectprefix = prefix;
 	Tcl_IncrRefCount(prefix);
+	return result;
 }
 
 static void freepvInfo(pvInfo *i) {
 	ckfree(i->name);
 	Tcl_DecrRefCount(i->connectprefix);
+	ckfree(i);
 }
 
 
@@ -124,9 +127,9 @@ static int ConnectCmd(ClientData clientData, Tcl_Interp *interp, int objc, Tcl_O
 	
 	const char * pvName = Tcl_GetString(pvNameObj);
 
-	pvInfo info = newpvInfo(0, pvName, cmdprefix);
+	pvInfo *info = newpvInfo(0, pvName, cmdprefix);
 
-	Tcl_CreateObjCommand(interp, objName, InstanceCmd, info, NULL);
+	Tcl_CreateObjCommand(interp, objName, InstanceCmd, (ClientData) info, NULL);
 	Tcl_SetObjResult(interp, Tcl_NewStringObj(objName, -1));
 	return TCL_OK;
 }
@@ -140,9 +143,6 @@ int Asynca_Init(Tcl_Interp* interp) {
 
 	Tcl_PkgProvide(interp, PACKAGE_NAME, PACKAGE_VERSION);
 
-	Tcl_RegisterObjType(&Tcl_ObjTypeType);
-
-	/* create namespace for commands */
 	if (Tcl_Eval(interp, "namespace eval AsynCA {}")!=TCL_OK) {
 		return TCL_ERROR;
 	}

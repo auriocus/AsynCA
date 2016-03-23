@@ -128,13 +128,12 @@ AC_DEFUN([AX_EPICS_BASE],
     export LIBS="-lca -lCom"
     export LIBS
 
-    AC_REQUIRE([AC_PROG_CXX])
-    AC_LANG_PUSH([C++])
+    AC_LANG_PUSH([C])
         AC_LINK_IFELSE([AC_LANG_PROGRAM(
             [[#include <cadef.h>]],
             [[ca_context_create(ca_enable_preemptive_callback);]])
         ],[succeeded=yes],[succeeded=no])
-    AC_LANG_POP([C++])
+    AC_LANG_POP([C])
 
     if test "$succeeded" != "yes" ; then
         AC_MSG_RESULT([no])
