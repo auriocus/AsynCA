@@ -16,11 +16,13 @@ typedef struct {
 	Tcl_Obj *connectprefix;
 	Tcl_Interp *interp;
 	Tcl_ThreadId thrid;
+	int connected;
 } pvInfo;
 
 
 static void freepvInfo(pvInfo *i);
 static int newpvInfo (Tcl_Interp *interp, const char *name, Tcl_Obj *prefix, pvInfo **info);
+static void DeleteCmd(ClientData cdata);
 
 void stateHandler (struct connection_handler_args chargs);
 
@@ -31,5 +33,10 @@ typedef struct {
 } connectionEvent;
 
 int stateHandlerInvoke(Tcl_Event* p, int flags);
+
+
+static int PutCmd(Tcl_Interp *interp, pvInfo *info, int objc, Tcl_Obj * const objv[]);
+static int GetCmd(Tcl_Interp *interp, pvInfo *info, int objc, Tcl_Obj * const objv[]);
+static int MonitorCmd(Tcl_Interp *interp, pvInfo *info, int objc, Tcl_Obj * const objv[]);
 
 #endif

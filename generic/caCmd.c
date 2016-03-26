@@ -21,6 +21,7 @@ static int newpvInfo (Tcl_Interp *interp, const char *name, Tcl_Obj *prefix, pvI
 	Tcl_IncrRefCount(prefix);
 	result->connectprefix = prefix;
 	result->id = 0;
+	result->connected = 0;
 	result->thrid = Tcl_GetCurrentThread();
 
 	/* connect PV */
@@ -46,7 +47,7 @@ static void freepvInfo(pvInfo *i) {
 void stateHandler (struct connection_handler_args chargs) {
 	/* callback */
 	pvInfo *info = ca_puser(chargs.chid);
-	printf("Callback from connection handler\n");
+/*	printf("Callback from connection handler\n");
 	printf("PV %s ", info->name);
 	switch (chargs.op) {
 		case CA_OP_CONN_UP: {
@@ -60,7 +61,7 @@ void stateHandler (struct connection_handler_args chargs) {
 		default: {
 			printf("Unkown opcode %ld\n", chargs.op);
 		}
-	}
+	}  */
 
 	/* queue event to handle the Tcl callback */
 	connectionEvent * cev = ckalloc(sizeof(connectionEvent));
@@ -84,14 +85,13 @@ int stateHandlerInvoke(Tcl_Event* p, int flags) {
 		goto bgerr;
 	}
 	
-	int connected;
 	if (cev->op == CA_OP_CONN_UP) {
-		connected = 1;
+		info->connected = 1;
 	} else {
-		connected = 0;
+		info->connected = 0;
 	}
 	
-	code = Tcl_ListObjAppendElement(info->interp, script, Tcl_NewBooleanObj(connected));
+	code = Tcl_ListObjAppendElement(info->interp, script, Tcl_NewBooleanObj(info->connected));
 	if (code != TCL_OK) {
 		goto bgerr;
 	}
@@ -115,18 +115,77 @@ bgerr:
 	return 1;
 }
 
+const char * pvcmdtable[] = {
+	"put",
+	"get",
+	"monitor",
+	"name",
+	"connected",
+	"destroy",
+	NULL
+};
+
+enum PVCMD {
+	PUT = 0,
+	GET = 1,
+	MONITOR = 2,
+	NAME = 3,
+	CONNECTED = 4,
+	DESTROY = 5
+};
+
 /* Object command for a PV object */
-static int InstanceCmd(ClientData clientData, Tcl_Interp *interp, int objc, Tcl_Obj *const objv[]) {
+static int InstanceCmd(ClientData clientData, Tcl_Interp *interp, int objc, Tcl_Obj * const objv[]) {
 	pvInfo *info = (pvInfo *) clientData;
-	/* Define subcommands:
-	 * put value -command <cmd>
-	 * get -command <cmd>
-	 * monitor <cmd>
-	 */
-	/* For now, just return the connected PV name */
-	Tcl_SetObjResult(interp, Tcl_NewStringObj(info->name, -1));
+
+	if (objc<2) {
+		Tcl_WrongNumArgs(interp, 1, objv, "subcommand");
+		return TCL_ERROR;
+	}
+	Tcl_Obj *subcommand=objv[1];
+	int cmdindex;
+	if (Tcl_GetIndexFromObj(interp, subcommand, pvcmdtable, "subcommand", 0, &cmdindex) != TCL_OK) {
+		return TCL_ERROR;
+	}
+	switch (cmdindex) {
+		case PUT:
+			return PutCmd(interp, info, objc, objv);
+		case GET:
+			return GetCmd(interp, info, objc, objv);
+		case MONITOR:
+			return MonitorCmd(interp, info, objc, objv);
+		case NAME:
+			Tcl_SetObjResult(interp, Tcl_NewStringObj(info->name, -1));
+			return TCL_OK;
+		case CONNECTED:
+			Tcl_SetObjResult(interp, Tcl_NewBooleanObj(info->connected));
+			return TCL_OK;
+		case DESTROY: {
+			Tcl_Command self = Tcl_GetCommandFromObj(interp, objv[0]);
+			if (self != NULL) {
+				Tcl_DeleteCommandFromToken(interp, self);
+			}
+			return TCL_OK;
+		}
+		default:
+			Tcl_SetObjResult(interp, Tcl_NewStringObj("Unknown error", -1));
+			return TCL_ERROR;
+	}
+			
+}
+
+static int PutCmd(Tcl_Interp *interp, pvInfo *info, int objc, Tcl_Obj * const objv[]) {
 	return TCL_OK;
 }
+
+static int GetCmd(Tcl_Interp *interp, pvInfo *info, int objc, Tcl_Obj * const objv[]) {
+	return TCL_OK;
+}
+
+static int MonitorCmd(Tcl_Interp *interp, pvInfo *info, int objc, Tcl_Obj * const objv[]) {
+	return TCL_OK;
+}
+
 
 /* Create a new process variable object and return it
  * The callback is invoked for every change of the connection status */
@@ -160,10 +219,14 @@ static int ConnectCmd(ClientData clientData, Tcl_Interp *interp, int objc, Tcl_O
 	/* Create object name */
 	char objName[50 + TCL_INTEGER_SPACE];
 	sprintf(objName, "::AsynCA::pv%d", ++pvcounter);
-	Tcl_CreateObjCommand(interp, objName, InstanceCmd, (ClientData) info, NULL);
+	Tcl_CreateObjCommand(interp, objName, InstanceCmd, (ClientData) info, DeleteCmd);
 	
 	Tcl_SetObjResult(interp, Tcl_NewStringObj(objName, -1));
 	return TCL_OK;
+}
+
+static void DeleteCmd(ClientData cdata) {
+	freepvInfo((pvInfo *)cdata);
 }
 
 int Asynca_Init(Tcl_Interp* interp) {
