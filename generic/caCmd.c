@@ -87,6 +87,9 @@ int stateHandlerInvoke(Tcl_Event* p, int flags) {
 	
 	if (cev->op == CA_OP_CONN_UP) {
 		info->connected = 1;
+		/* Retrieve information about type and number of elements */
+		info->nElem = ca_element_count(info->id);
+		info->type  = ca_field_type(info->id);
 	} else {
 		info->connected = 0;
 	}
@@ -116,22 +119,26 @@ bgerr:
 }
 
 const char * pvcmdtable[] = {
+	"destroy",
 	"put",
 	"get",
 	"monitor",
 	"name",
 	"connected",
-	"destroy",
+	"nelem",
+	"type",
 	NULL
 };
 
 enum PVCMD {
-	PUT = 0,
-	GET = 1,
-	MONITOR = 2,
-	NAME = 3,
-	CONNECTED = 4,
-	DESTROY = 5
+	DESTROY = 0,
+	PUT,
+	GET,
+	MONITOR,
+	NAME,
+	CONNECTED,
+	NELEM,
+	TYPE
 };
 
 /* Object command for a PV object */
@@ -159,6 +166,12 @@ static int InstanceCmd(ClientData clientData, Tcl_Interp *interp, int objc, Tcl_
 			return TCL_OK;
 		case CONNECTED:
 			Tcl_SetObjResult(interp, Tcl_NewBooleanObj(info->connected));
+			return TCL_OK;
+		case NELEM:
+			Tcl_SetObjResult(interp, Tcl_NewWideIntObj(info->nElem));
+			return TCL_OK;
+		case TYPE:
+			Tcl_SetObjResult(interp, Tcl_NewStringObj(dbr_type_to_text(info->type), -1));
 			return TCL_OK;
 		case DESTROY: {
 			Tcl_Command self = Tcl_GetCommandFromObj(interp, objv[0]);

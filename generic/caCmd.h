@@ -17,6 +17,8 @@ typedef struct {
 	Tcl_Interp *interp;
 	Tcl_ThreadId thrid;
 	int connected;
+	unsigned nElem;
+	chtype type;
 } pvInfo;
 
 
@@ -36,6 +38,14 @@ int stateHandlerInvoke(Tcl_Event* p, int flags);
 
 
 static int PutCmd(Tcl_Interp *interp, pvInfo *info, int objc, Tcl_Obj * const objv[]);
+
+typedef struct {
+	Tcl_Event ev;
+	pvInfo *info;
+	Tcl_Obj *data;
+	Tcl_Obj *metadata;
+} getEvent;
+
 static int GetCmd(Tcl_Interp *interp, pvInfo *info, int objc, Tcl_Obj * const objv[]);
 static int MonitorCmd(Tcl_Interp *interp, pvInfo *info, int objc, Tcl_Obj * const objv[]);
 
