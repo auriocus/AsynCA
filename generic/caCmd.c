@@ -125,7 +125,7 @@ const char * pvcmdtable[] = {
 	"monitor",
 	"name",
 	"connected",
-	"nelem",
+	"nElem",
 	"type",
 	NULL
 };
@@ -192,7 +192,133 @@ static int PutCmd(Tcl_Interp *interp, pvInfo *info, int objc, Tcl_Obj * const ob
 }
 
 static int GetCmd(Tcl_Interp *interp, pvInfo *info, int objc, Tcl_Obj * const objv[]) {
+	if (objc != 4) {
+		Tcl_WrongNumArgs(interp, 2, objv, "-command <cmdprefix>");
+		return TCL_ERROR;
+	}
+	
+	Tcl_Obj *cmdopt = objv[2];
+	Tcl_Obj *cmdprefix =objv[3];
+
+	/* check that the option is -command */
+	if (strcmp(Tcl_GetString(cmdopt), "-command") != 0) {
+		Tcl_SetObjResult(interp, Tcl_NewStringObj("Unknown option, must be -command", -1));
+		return TCL_ERROR;
+	}
+
+
+	/* request a read with the native datatype */
+	getEvent *ev = ckalloc(sizeof(getEvent));
+	ev->info = info;
+	ev->getCmdPrefix = cmdprefix;
+	Tcl_IncrRefCount(cmdprefix);
+
+	int code = ca_array_get_callback (info->type, info->nElem, info->id, getHandler, ev);
+	if (code != ECA_NORMAL) {
+		/* raise error */
+		ckfree(ev);
+		Tcl_DecrRefCount(cmdprefix);
+		Tcl_SetObjResult(interp, Tcl_NewStringObj(ca_message(code), -1));
+		return TCL_ERROR;
+	}	
+	
+	code = ca_flush_io();
+	if (code != ECA_NORMAL) {
+		/* raise error */
+		Tcl_SetObjResult(interp, Tcl_NewStringObj(ca_message(code), -1));
+		return TCL_ERROR;
+	}
+
 	return TCL_OK;
+}
+
+static void getHandler(struct event_handler_args args) {
+	/* the callback exec'ed from EPICS 
+	 * get succeeded */
+	getEvent *ev = args.usr;
+	pvInfo *info = ev->info;
+	if ( args.status != ECA_NORMAL ) {
+		/* TODO background exception 
+		 * Must be postponed into Tcl event handler */
+		ev->code = TCL_ERROR;
+	}
+	/* Convert result into Tcl_Obj */
+    ev->data = EpicsValue2Tcl(args);
+	Tcl_IncrRefCount(ev->data);
+	Tcl_Obj *timestamp = EpicsTime2Tcl(args);
+	ev->metadata = Tcl_NewDictObj();
+	Tcl_IncrRefCount(ev->metadata);
+	Tcl_DictObjPut(info->interp, ev->metadata, Tcl_NewStringObj("time", -1), timestamp);
+	
+	ev->ev.proc=getHandlerInvoke;
+	ev->code = TCL_OK;
+	Tcl_ThreadQueueEvent(info->thrid, (Tcl_Event*)ev, TCL_QUEUE_TAIL);
+	Tcl_ThreadAlert(info->thrid);
+}
+
+static int  getHandlerInvoke(Tcl_Event *p, int flags) {
+	/* the event handler run from Tcl */
+	getEvent *ev = (getEvent *)p;
+	pvInfo *info = ev->info;
+	Tcl_Obj *script = Tcl_DuplicateObj(ev->getCmdPrefix);
+	Tcl_IncrRefCount(script);
+	/* append result data and metadata dict */
+	int code = Tcl_ListObjAppendElement(info->interp, script, ev->data);
+	if (code != TCL_OK) {
+		goto bgerr;
+	}
+	
+	code = Tcl_ListObjAppendElement(info->interp, script, ev->metadata);
+	if (code != TCL_OK) {
+		goto bgerr;
+	}
+
+	Tcl_Preserve(info->interp);
+	code = Tcl_EvalObjEx(info->interp, script, TCL_EVAL_GLOBAL);
+
+	if (code != TCL_OK) { goto bgerr; }
+
+	Tcl_Release(info->interp);
+	Tcl_DecrRefCount(ev->data);
+	Tcl_DecrRefCount(ev->metadata);
+	Tcl_DecrRefCount(script);
+	/* this event was successfully handled */
+	return 1; 
+bgerr:
+	/* put error in background */
+	Tcl_DecrRefCount(ev->data);
+	Tcl_DecrRefCount(ev->metadata);
+	Tcl_DecrRefCount(script);
+	
+	Tcl_AddErrorInfo(info->interp, "\n    (epics get callback script)");
+	Tcl_BackgroundException(info->interp, code);
+	
+	/* this event was successfully handled */
+	return 1;
+}
+
+static Tcl_Obj * EpicsValue2Tcl(struct event_handler_args args) {
+	if (args.count == 1) {
+		/* scalar conversion */
+		switch (args.type) {
+			case DBR_DOUBLE: {
+				dbr_double_t val = *((dbr_double_t *)args.dbr);
+				return Tcl_NewDoubleObj(val);
+			}
+			case DBR_FLOAT:  {
+				dbr_float_t val = *((dbr_float_t *)args.dbr);
+				return Tcl_NewDoubleObj(val);
+			}
+			default:
+				return Tcl_NewStringObj("Some scalar value", -1);
+		}
+	}
+
+	return Tcl_NewStringObj("Some vector value", -1);
+}
+
+static Tcl_Obj * EpicsTime2Tcl(struct event_handler_args args) {
+	return Tcl_NewDoubleObj(3.1415926);
 }
 
 static int MonitorCmd(Tcl_Interp *interp, pvInfo *info, int objc, Tcl_Obj * const objv[]) {

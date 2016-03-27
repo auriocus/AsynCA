@@ -7,7 +7,7 @@ proc pvack {pv status} {
 
 proc cainfo {pv} {
 	puts [$pv name]
-	puts "[$pv nelem] elements"
+	puts "[$pv nElem] elements"
 	puts "[$pv type]"
 }
 
