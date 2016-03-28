@@ -16,3 +16,18 @@ vwait connected
 
 cainfo $pv
 
+proc tie {cmd args} {
+	$cmd $args
+}
+
+proc newvalue {pv} {
+	$pv monitor -command [list tie [info coroutine]]
+	for {set i 0} {$i<20} {incr i} {
+		lassign [yield] value meta
+		puts $value
+	}
+	$pv monitor -command {}
+}
+
+coroutine newjane newvalue $pv
+

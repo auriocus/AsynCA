@@ -6,14 +6,28 @@
 #include <tcl.h>
 #include <string.h>
 #include <stdlib.h>
+
+/* caCheckTcl raises an error if code is an EPICS error */
+#define CACHECKTCL(cleanup) \
+	if (code != ECA_NORMAL) { \
+		cleanup; \
+		Tcl_DecrRefCount(cmdprefix); \
+		Tcl_SetObjResult(interp, Tcl_NewStringObj(ca_message(code), -1)); \
+		return TCL_ERROR; \
+	} 
+
+
 /* Process variable object */
 typedef struct {
+	Tcl_Mutex mutex;
 	chid id; /* the EPICS connection ID for this channel */
 	
 	const char *name; /* PV name */
 	
 	/* Tcl command prefix which is invoked if the connection status changes */
 	Tcl_Obj *connectprefix;
+	Tcl_Obj *monitorprefix;
+	evid monitorid;
 	Tcl_Interp *interp;
 	Tcl_ThreadId thrid;
 	int connected;
@@ -25,7 +39,12 @@ typedef struct {
 static void freepvInfo(pvInfo *i);
 static int newpvInfo (Tcl_Interp *interp, const char *name, Tcl_Obj *prefix, pvInfo **info);
 static void DeleteCmd(ClientData cdata);
+static int PVeventDeleteProc(Tcl_Event *e, ClientData cdata);
 
+typedef struct {
+	Tcl_Event ev;
+	pvInfo *info;
+} PVevent;
 
 typedef struct {
 	Tcl_Event ev;
@@ -33,8 +52,8 @@ typedef struct {
 	long op;
 } connectionEvent;
 
-void stateHandler (struct connection_handler_args chargs);
-int stateHandlerInvoke(Tcl_Event* p, int flags);
+static void stateHandler (struct connection_handler_args chargs);
+static int stateHandlerInvoke(Tcl_Event* p, int flags);
 
 
 static int PutCmd(Tcl_Interp *interp, pvInfo *info, int objc, Tcl_Obj * const objv[]);
@@ -57,5 +76,6 @@ static Tcl_Obj * EpicsValue2Tcl(struct event_handler_args args);
 static Tcl_Obj * EpicsTime2Tcl(struct event_handler_args args);
 
 static int MonitorCmd(Tcl_Interp *interp, pvInfo *info, int objc, Tcl_Obj * const objv[]);
+static void monitorHandler(struct event_handler_args args); /* the callback exec'ed from EPICS */
 
 #endif
