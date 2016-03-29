@@ -308,6 +308,29 @@ static int GetEpicsValueFromObj(Tcl_Interp *interp, Tcl_Obj *obj, chtype type, l
 	if (count == 1) {
 		/* scalar values */
 		switch (type) {
+#define INTVALCONV(CHTYPE, CTYPE) \
+			case CHTYPE: { \
+				Tcl_WideInt val;\
+				if (Tcl_GetWideIntFromObj(interp, obj, &val) != TCL_OK) {\
+					return TCL_ERROR;\
+				}\
+				CTYPE tval = val;\
+				\
+				if (tval != val) {\
+					/* value doesn't fit */\
+					Tcl_SetObjResult(interp, Tcl_NewStringObj("Value outside range for type " STRINGIFY(CHTYPE), -1));\
+					return TCL_ERROR;\
+				}\
+				CTYPE *dbuf = ckalloc(sizeof(CTYPE));\
+				*dbuf = tval; \
+				*dbr = dbuf;\
+				return TCL_OK; \
+			}
+	
+			INTVALCONV(DBR_CHAR, dbr_char_t)
+			INTVALCONV(DBR_SHORT, dbr_short_t)
+			INTVALCONV(DBR_LONG, dbr_long_t)
+#undef INTVALCONV
 			case DBR_DOUBLE: {
 				double val;
 				if (Tcl_GetDoubleFromObj(interp, obj, &val) != TCL_OK) {
@@ -489,10 +512,19 @@ static Tcl_Obj * EpicsValue2Tcl(struct event_handler_args args) {
 				dbr_float_t val = *((dbr_float_t *)args.dbr);
 				return Tcl_NewDoubleObj(val);
 			}
-			case DBR_ENUM: {
-				dbr_enum_t val = *((dbr_enum_t *)args.dbr);
-				return Tcl_NewWideIntObj(val);
+
+#define INTVALCONV(CHTYPE, CTYPE) \
+			case CHTYPE: { \
+				CTYPE val = *((CTYPE *)args.dbr); \
+				return Tcl_NewWideIntObj(val); \
 			}
+		
+			INTVALCONV(DBR_ENUM, dbr_enum_t)
+			INTVALCONV(DBR_CHAR, dbr_char_t)
+			INTVALCONV(DBR_SHORT, dbr_short_t)
+			INTVALCONV(DBR_LONG, dbr_long_t)
+#undef INTVALCONV
+
 			default:
 				return Tcl_NewStringObj("Some scalar value", -1);
 		}
