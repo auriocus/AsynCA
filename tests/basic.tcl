@@ -31,3 +31,7 @@ proc newvalue {pv} {
 
 coroutine newjane newvalue $pv
 
+#proc print {args} {
+#	puts $args
+#}
+

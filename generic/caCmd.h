@@ -55,8 +55,19 @@ typedef struct {
 static void stateHandler (struct connection_handler_args chargs);
 static int stateHandlerInvoke(Tcl_Event* p, int flags);
 
+typedef struct {
+	Tcl_Event ev;
+	pvInfo *info;
+	Tcl_Obj *putCmdPrefix;
+	int code;
+} putEvent;
 
 static int PutCmd(Tcl_Interp *interp, pvInfo *info, int objc, Tcl_Obj * const objv[]);
+
+static void putHandler(struct event_handler_args args); /* the callback exec'ed from EPICS */
+static int  putHandlerInvoke(Tcl_Event *p, int flags); /* the event handler run from Tcl */
+
+static int GetEpicsValueFromObj(Tcl_Interp *interp, Tcl_Obj *obj, chtype type, long count, chtype *otype, void **dbr);
 
 static int GetCmd(Tcl_Interp *interp, pvInfo *info, int objc, Tcl_Obj * const objv[]);
 typedef struct {
@@ -74,6 +85,9 @@ static int  getHandlerInvoke(Tcl_Event *p, int flags); /* the event handler run 
 /* convert EPICS data into Tcl_Obj */
 static Tcl_Obj * EpicsValue2Tcl(struct event_handler_args args);
 static Tcl_Obj * EpicsTime2Tcl(struct event_handler_args args);
+
+/* convert Tcl_Obj into C representation for EPICS */
+static int GetEpicsValueFromObj(Tcl_Interp *interp, Tcl_Obj *obj, chtype type, long count, chtype *otype, void **dbr);
 
 static int MonitorCmd(Tcl_Interp *interp, pvInfo *info, int objc, Tcl_Obj * const objv[]);
 static void monitorHandler(struct event_handler_args args); /* the callback exec'ed from EPICS */

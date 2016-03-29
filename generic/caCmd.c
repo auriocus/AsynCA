@@ -63,7 +63,7 @@ static void freepvInfo(pvInfo *i) {
 }
 
 static int PVeventDeleteProc(Tcl_Event *e, ClientData cdata) {
-	if (e->proc == stateHandlerInvoke || e->proc == getHandlerInvoke) {
+	if (e->proc == stateHandlerInvoke || e->proc == getHandlerInvoke || e->proc == putHandlerInvoke) {
 		/* one of the EPICS events */
 		PVevent *pev = (PVevent *) e;
 		pvInfo *info_to_remove = (pvInfo *) cdata;
@@ -207,7 +207,160 @@ static int InstanceCmd(ClientData clientData, Tcl_Interp *interp, int objc, Tcl_
 }
 
 static int PutCmd(Tcl_Interp *interp, pvInfo *info, int objc, Tcl_Obj * const objv[]) {
+	if (objc != 5) {
+		Tcl_WrongNumArgs(interp, 2, objv, "<value> -command <cmdprefix>");
+		return TCL_ERROR;
+	}
+	
+	Tcl_Obj *value  = objv[2];
+	Tcl_Obj *cmdopt = objv[3];
+	Tcl_Obj *cmdprefix = objv[4];
+
+	/* check that the option is -command */
+	if (strcmp(Tcl_GetString(cmdopt), "-command") != 0) {
+		Tcl_SetObjResult(interp, Tcl_NewStringObj("Unknown option, must be -command", -1));
+		return TCL_ERROR;
+	}
+
+	/* Convert value into the EPICS record format */
+	void *dbr;
+	chtype puttype;
+	if (GetEpicsValueFromObj(interp, value, info->type, info->nElem, &puttype, &dbr) != TCL_OK) {
+		return TCL_ERROR;
+	}
+
+	/* Issue put operation */
+	putEvent *ev = ckalloc(sizeof(putEvent));
+	ev->info = info;
+	ev->putCmdPrefix = cmdprefix;
+	Tcl_IncrRefCount(ev->putCmdPrefix);
+	ev->code = TCL_OK;
+
+	int code = ca_array_put_callback (puttype, info->nElem, info->id, dbr, putHandler, ev);
+	
+	CACHECKTCL(ckfree(dbr); Tcl_DecrRefCount(ev->putCmdPrefix); ckfree(ev));
+
+	code = ca_flush_io();
+	
+	CACHECKTCL(ckfree(dbr));
+
+	ckfree(dbr);
 	return TCL_OK;
+}
+
+static void putHandler(struct event_handler_args args) {
+	/* put operation is finished */
+	putEvent *pev = args.usr;
+	pvInfo *info = pev->info;
+
+	pev->ev.proc=putHandlerInvoke;
+	Tcl_ThreadQueueEvent(info->thrid, (Tcl_Event*)pev, TCL_QUEUE_TAIL);
+	Tcl_ThreadAlert(info->thrid);
+}
+
+static int  putHandlerInvoke(Tcl_Event *p, int flags) {
+	/* the event handler run from Tcl */
+	putEvent *ev = (putEvent *)p;
+	pvInfo *info = ev->info;
+	
+	/* if the script is empty, ignore */
+	if (ev->putCmdPrefix == NULL) { return 1; }
+
+	Tcl_Obj *script = Tcl_DuplicateObj(ev->putCmdPrefix);
+	Tcl_IncrRefCount(script);
+
+	/* append result data and metadata dict */
+	int code = Tcl_ListObjAppendElement(info->interp, script, Tcl_NewWideIntObj(ev->code));
+	if (code != TCL_OK) {
+		goto bgerr;
+	}
+	
+	Tcl_Preserve(info->interp);
+	code = Tcl_EvalObjEx(info->interp, script, TCL_EVAL_GLOBAL);
+
+	if (code != TCL_OK) { goto bgerr; }
+
+	Tcl_Release(info->interp);
+	Tcl_DecrRefCount(script);
+	/* this event was successfully handled */
+	return 1; 
+bgerr:
+	/* put error in background */
+	Tcl_DecrRefCount(script);
+	
+	Tcl_AddErrorInfo(info->interp, "\n    (epics put callback script)");
+	Tcl_BackgroundException(info->interp, code);
+	
+	/* this event was successfully handled */
+	return 1;
+
+	return 1;
+}
+
+
+static int GetEpicsValueFromObj(Tcl_Interp *interp, Tcl_Obj *obj, chtype type, long count, chtype *otype, void **dbr) {
+	/* scalar values */
+	if (count < 1) {
+		Tcl_SetObjResult(interp, Tcl_NewStringObj("assert failed (count >= 1)", -1));
+		return TCL_ERROR;
+	}
+
+	if (count == 1) {
+		/* scalar values */
+		switch (type) {
+			case DBR_DOUBLE: {
+				double val;
+				if (Tcl_GetDoubleFromObj(interp, obj, &val) != TCL_OK) {
+					return TCL_ERROR;
+				}
+
+				dbr_double_t *vptr = ckalloc(sizeof(dbr_double_t));
+				*vptr = val;
+
+				*dbr = vptr;
+				*otype = type;
+				return TCL_OK;
+			}
+			case DBR_FLOAT:  {				
+				double val;
+				if (Tcl_GetDoubleFromObj(interp, obj, &val) != TCL_OK) {
+					return TCL_ERROR;
+				}
+
+				dbr_float_t *vptr = ckalloc(sizeof(dbr_float_t));
+				*vptr = val;
+
+				*dbr = vptr;
+				*otype = type;
+				return TCL_OK;
+	
+			}
+			case DBR_ENUM: {
+				long val;
+				if (Tcl_GetLongFromObj(interp, obj, &val) != TCL_OK) {
+					Tcl_AddErrorInfo(interp, "\n(string enum not implemented)");
+					return TCL_ERROR;
+				}
+
+				dbr_enum_t *vptr = ckalloc(sizeof(dbr_enum_t));
+				*vptr = val;
+
+				*dbr = vptr;
+				*otype = type;
+				return TCL_OK;
+			}
+			default: {
+				Tcl_SetObjResult(interp, Tcl_NewStringObj("Unsupported data type", -1));
+				return TCL_ERROR;
+			}
+		}
+	} else {
+		/* vector values */
+#ifndef HAVE_VECTCL
+		Tcl_SetObjResult(interp, Tcl_NewStringObj("Vector put not implemented", -1));
+		return TCL_ERROR;
+#endif
+	}
 }
 
 static int GetCmd(Tcl_Interp *interp, pvInfo *info, int objc, Tcl_Obj * const objv[]) {
@@ -271,7 +424,7 @@ static void getHandler(struct event_handler_args args) {
 	Tcl_Obj *timestamp = EpicsTime2Tcl(args);
 	ev->metadata = Tcl_NewDictObj();
 	Tcl_IncrRefCount(ev->metadata);
-	Tcl_DictObjPut(info->interp, ev->metadata, Tcl_NewStringObj("time", -1), timestamp);
+	Tcl_DictObjPut(NULL, ev->metadata, Tcl_NewStringObj("time", -1), timestamp);
 	
 	ev->ev.proc=getHandlerInvoke;
 	Tcl_ThreadQueueEvent(info->thrid, (Tcl_Event*)ev, TCL_QUEUE_TAIL);
