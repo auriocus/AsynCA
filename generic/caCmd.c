@@ -528,6 +528,44 @@ static Tcl_Obj * EpicsValue2Tcl(struct event_handler_args args) {
 			default:
 				return Tcl_NewStringObj("Some scalar value", -1);
 		}
+	} else {
+#ifndef HAVE_VECTCL
+/* Construct an ordinary Tcl list */
+		Tcl_Obj *result = Tcl_NewObj();
+		switch (args.type) {
+			case DBR_DOUBLE: {
+				dbr_double_t *vptr = ((dbr_double_t *)args.dbr);
+				unsigned n;
+				for (n=0; n<args.count; n++) {
+					Tcl_ListObjAppendElement(NULL, result, Tcl_NewDoubleObj(vptr[n]));
+				}
+				return result;
+			}
+			case DBR_FLOAT:  {
+				dbr_float_t *vptr = ((dbr_float_t *)args.dbr);
+				unsigned n;
+				for (n=0; n<args.count; n++) {
+					Tcl_ListObjAppendElement(NULL, result, Tcl_NewDoubleObj(vptr[n]));
+				}
+				return result;
+			}
+#define INTVALCONV(CHTYPE, CTYPE)\
+			case CHTYPE:  {\
+				CTYPE *vptr = ((CTYPE *)args.dbr);\
+				unsigned n;\
+				for (n=0; n<args.count; n++) {\
+					Tcl_ListObjAppendElement(NULL, result, Tcl_NewLongObj(vptr[n]));\
+				}\
+				return result;\
+			}
+			INTVALCONV(DBR_ENUM, dbr_enum_t)
+			INTVALCONV(DBR_CHAR, dbr_char_t)
+			INTVALCONV(DBR_SHORT, dbr_short_t)
+			INTVALCONV(DBR_LONG, dbr_long_t)
+#undef INTVALCONV
+		}
+	
+#endif
 	}
 
 	return Tcl_NewStringObj("Some vector value", -1);
