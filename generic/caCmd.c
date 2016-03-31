@@ -360,9 +360,20 @@ static int GetEpicsValueFromObj(Tcl_Interp *interp, Tcl_Obj *obj, chtype type, l
 			}
 			case DBR_ENUM: {
 				long val;
-				if (Tcl_GetLongFromObj(interp, obj, &val) != TCL_OK) {
-					Tcl_AddErrorInfo(interp, "\n(string enum not implemented)");
-					return TCL_ERROR;
+				if (Tcl_GetLongFromObj(NULL, obj, &val) != TCL_OK) {
+					/* if it's not an int, put the value as a string 
+					 * Note: May fail, if an enum string is set to a decimal integer */
+					 dbr_string_t *vptr = ckalloc(sizeof(dbr_string_t));
+					 int len;
+					 char *buf = Tcl_GetStringFromObj(obj, &len);
+					 if (len > MAX_ENUM_STRING_SIZE) {
+					 	Tcl_SetObjResult(interp, Tcl_NewStringObj("String too long for enum", -1));
+						return TCL_ERROR;
+					 }
+					 strncpy(*vptr, buf, len);
+					 *dbr = vptr;
+					 *otype = DBR_STRING;
+					 return TCL_OK;
 				}
 
 				dbr_enum_t *vptr = ckalloc(sizeof(dbr_enum_t));
