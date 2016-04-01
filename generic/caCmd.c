@@ -211,7 +211,7 @@ static int PutCmd(Tcl_Interp *interp, pvInfo *info, int objc, Tcl_Obj * const ob
 		Tcl_WrongNumArgs(interp, 2, objv, "<value> -command <cmdprefix>");
 		return TCL_ERROR;
 	}
-	
+
 	Tcl_Obj *value  = objv[2];
 	Tcl_Obj *cmdopt = objv[3];
 	Tcl_Obj *cmdprefix = objv[4];
@@ -237,11 +237,11 @@ static int PutCmd(Tcl_Interp *interp, pvInfo *info, int objc, Tcl_Obj * const ob
 	ev->code = TCL_OK;
 
 	int code = ca_array_put_callback (puttype, info->nElem, info->id, dbr, putHandler, ev);
-	
+
 	CACHECKTCL(ckfree(dbr); Tcl_DecrRefCount(ev->putCmdPrefix); ckfree(ev));
 
 	code = ca_flush_io();
-	
+
 	CACHECKTCL(ckfree(dbr));
 
 	ckfree(dbr);
@@ -254,6 +254,7 @@ static void putHandler(struct event_handler_args args) {
 	pvInfo *info = pev->info;
 
 	pev->ev.proc=putHandlerInvoke;
+	pev->code = args.status;
 	Tcl_ThreadQueueEvent(info->thrid, (Tcl_Event*)pev, TCL_QUEUE_TAIL);
 	Tcl_ThreadAlert(info->thrid);
 }
@@ -262,7 +263,7 @@ static int  putHandlerInvoke(Tcl_Event *p, int flags) {
 	/* the event handler run from Tcl */
 	putEvent *ev = (putEvent *)p;
 	pvInfo *info = ev->info;
-	
+
 	/* if the script is empty, ignore */
 	if (ev->putCmdPrefix == NULL) { return 1; }
 
@@ -274,7 +275,7 @@ static int  putHandlerInvoke(Tcl_Event *p, int flags) {
 	if (code != TCL_OK) {
 		goto bgerr;
 	}
-	
+
 	Tcl_Preserve(info->interp);
 	code = Tcl_EvalObjEx(info->interp, script, TCL_EVAL_GLOBAL);
 
@@ -287,10 +288,10 @@ static int  putHandlerInvoke(Tcl_Event *p, int flags) {
 bgerr:
 	/* put error in background */
 	Tcl_DecrRefCount(script);
-	
+
 	Tcl_AddErrorInfo(info->interp, "\n    (epics put callback script)");
 	Tcl_BackgroundException(info->interp, code);
-	
+
 	/* this event was successfully handled */
 	return 1;
 
@@ -310,79 +311,79 @@ static int GetEpicsValueFromObj(Tcl_Interp *interp, Tcl_Obj *obj, chtype type, l
 		switch (type) {
 #define INTVALCONV(CHTYPE, CTYPE) \
 			case CHTYPE: { \
-				Tcl_WideInt val;\
-				if (Tcl_GetWideIntFromObj(interp, obj, &val) != TCL_OK) {\
-					return TCL_ERROR;\
-				}\
-				CTYPE tval = val;\
-				\
-				if (tval != val) {\
-					/* value doesn't fit */\
-					Tcl_SetObjResult(interp, Tcl_NewStringObj("Value outside range for type " STRINGIFY(CHTYPE), -1));\
-					return TCL_ERROR;\
-				}\
-				CTYPE *dbuf = ckalloc(sizeof(CTYPE));\
-				*dbuf = tval; \
-				*dbr = dbuf;\
-				return TCL_OK; \
-			}
-	
+							 Tcl_WideInt val;\
+							 if (Tcl_GetWideIntFromObj(interp, obj, &val) != TCL_OK) {\
+								 return TCL_ERROR;\
+							 }\
+							 CTYPE tval = val;\
+							 \
+							 if (tval != val) {\
+								 /* value doesn't fit */\
+								 Tcl_SetObjResult(interp, Tcl_NewStringObj("Value outside range for type " STRINGIFY(CHTYPE), -1));\
+								 return TCL_ERROR;\
+							 }\
+							 CTYPE *dbuf = ckalloc(sizeof(CTYPE));\
+							 *dbuf = tval; \
+							 *dbr = dbuf;\
+							 return TCL_OK; \
+						 }
+
 			INTVALCONV(DBR_CHAR, dbr_char_t)
 			INTVALCONV(DBR_SHORT, dbr_short_t)
 			INTVALCONV(DBR_LONG, dbr_long_t)
 #undef INTVALCONV
 			case DBR_DOUBLE: {
-				double val;
-				if (Tcl_GetDoubleFromObj(interp, obj, &val) != TCL_OK) {
-					return TCL_ERROR;
-				}
+				 double val;
+				 if (Tcl_GetDoubleFromObj(interp, obj, &val) != TCL_OK) {
+					 return TCL_ERROR;
+				 }
 
-				dbr_double_t *vptr = ckalloc(sizeof(dbr_double_t));
-				*vptr = val;
+				 dbr_double_t *vptr = ckalloc(sizeof(dbr_double_t));
+				 *vptr = val;
 
-				*dbr = vptr;
-				*otype = type;
-				return TCL_OK;
+				 *dbr = vptr;
+				 *otype = type;
+				 return TCL_OK;
 			}
 			case DBR_FLOAT:  {				
-				double val;
-				if (Tcl_GetDoubleFromObj(interp, obj, &val) != TCL_OK) {
-					return TCL_ERROR;
-				}
+				 double val;
+				 if (Tcl_GetDoubleFromObj(interp, obj, &val) != TCL_OK) {
+					 return TCL_ERROR;
+				 }
 
-				dbr_float_t *vptr = ckalloc(sizeof(dbr_float_t));
-				*vptr = val;
+				 dbr_float_t *vptr = ckalloc(sizeof(dbr_float_t));
+				 *vptr = val;
 
-				*dbr = vptr;
-				*otype = type;
-				return TCL_OK;
-	
-			}
+				 *dbr = vptr;
+				 *otype = type;
+				 return TCL_OK;
+
+			 }
 			case DBR_ENUM: {
 				long val;
 				if (Tcl_GetLongFromObj(NULL, obj, &val) != TCL_OK) {
 					/* if it's not an int, put the value as a string 
 					 * Note: May fail, if an enum string is set to a decimal integer */
-					 dbr_string_t *vptr = ckalloc(sizeof(dbr_string_t));
-					 int len;
-					 char *buf = Tcl_GetStringFromObj(obj, &len);
-					 if (len > MAX_ENUM_STRING_SIZE) {
-					 	Tcl_SetObjResult(interp, Tcl_NewStringObj("String too long for enum", -1));
+					dbr_string_t *vptr = ckalloc(sizeof(dbr_string_t));
+					int len;
+					char *buf = Tcl_GetStringFromObj(obj, &len);
+					if (len > MAX_ENUM_STRING_SIZE) {
+						Tcl_SetObjResult(interp, Tcl_NewStringObj("String too long for enum", -1));
 						return TCL_ERROR;
-					 }
-					 strncpy(*vptr, buf, len);
-					 *dbr = vptr;
-					 *otype = DBR_STRING;
-					 return TCL_OK;
-				}
-
-				dbr_enum_t *vptr = ckalloc(sizeof(dbr_enum_t));
-				*vptr = val;
-
-				*dbr = vptr;
-				*otype = type;
-				return TCL_OK;
+					}
+					strncpy(*vptr, buf, len);
+					*dbr = vptr;
+					*otype = DBR_STRING;
+					return TCL_OK;
 			}
+
+			dbr_enum_t *vptr = ckalloc(sizeof(dbr_enum_t));
+			*vptr = val;
+
+			*dbr = vptr;
+			*otype = type;
+			return TCL_OK;
+		   }
 			default: {
 				Tcl_SetObjResult(interp, Tcl_NewStringObj("Unsupported data type", -1));
 				return TCL_ERROR;
@@ -402,7 +403,7 @@ static int GetCmd(Tcl_Interp *interp, pvInfo *info, int objc, Tcl_Obj * const ob
 		Tcl_WrongNumArgs(interp, 2, objv, "-command <cmdprefix>");
 		return TCL_ERROR;
 	}
-	
+
 	Tcl_Obj *cmdopt = objv[2];
 	Tcl_Obj *cmdprefix =objv[3];
 
@@ -419,7 +420,10 @@ static int GetCmd(Tcl_Interp *interp, pvInfo *info, int objc, Tcl_Obj * const ob
 	ev->getCmdPrefix = cmdprefix;
 	Tcl_IncrRefCount(cmdprefix);
 
-	int code = ca_array_get_callback (info->type, info->nElem, info->id, getHandler, ev);
+	chtype gettype = info->type;
+	/* retrieve enums as string */
+	if (gettype == DBR_ENUM) { gettype = DBR_STRING; }
+	int code = ca_array_get_callback (gettype, info->nElem, info->id, getHandler, ev);
 	if (code != ECA_NORMAL) {
 		/* raise error */
 		ckfree(ev);
@@ -427,7 +431,7 @@ static int GetCmd(Tcl_Interp *interp, pvInfo *info, int objc, Tcl_Obj * const ob
 		Tcl_SetObjResult(interp, Tcl_NewStringObj(ca_message(code), -1));
 		return TCL_ERROR;
 	}	
-	
+
 	code = ca_flush_io();
 	if (code != ECA_NORMAL) {
 		/* raise error */
@@ -443,7 +447,7 @@ static void getHandler(struct event_handler_args args) {
 	 * get succeeded */
 	getEvent *ev = args.usr;
 	pvInfo *info = ev->info;
-	
+
 	if ( args.status == ECA_NORMAL ) {
 		ev->code = TCL_OK;
 	} else {
@@ -453,13 +457,13 @@ static void getHandler(struct event_handler_args args) {
 	}
 
 	/* Convert result into Tcl_Obj */
-    ev->data = EpicsValue2Tcl(args);
+	ev->data = EpicsValue2Tcl(args);
 	Tcl_IncrRefCount(ev->data);
 	Tcl_Obj *timestamp = EpicsTime2Tcl(args);
 	ev->metadata = Tcl_NewDictObj();
 	Tcl_IncrRefCount(ev->metadata);
 	Tcl_DictObjPut(NULL, ev->metadata, Tcl_NewStringObj("time", -1), timestamp);
-	
+
 	ev->ev.proc=getHandlerInvoke;
 	Tcl_ThreadQueueEvent(info->thrid, (Tcl_Event*)ev, TCL_QUEUE_TAIL);
 	Tcl_ThreadAlert(info->thrid);
@@ -469,7 +473,7 @@ static int  getHandlerInvoke(Tcl_Event *p, int flags) {
 	/* the event handler run from Tcl */
 	getEvent *ev = (getEvent *)p;
 	pvInfo *info = ev->info;
-	
+
 	/* if the script is empty, ignore */
 	if (ev->getCmdPrefix == NULL) { return 1; }
 
@@ -481,7 +485,7 @@ static int  getHandlerInvoke(Tcl_Event *p, int flags) {
 	if (code != TCL_OK) {
 		goto bgerr;
 	}
-	
+
 	code = Tcl_ListObjAppendElement(info->interp, script, ev->metadata);
 	if (code != TCL_OK) {
 		goto bgerr;
@@ -503,10 +507,10 @@ bgerr:
 	Tcl_DecrRefCount(ev->data);
 	Tcl_DecrRefCount(ev->metadata);
 	Tcl_DecrRefCount(script);
-	
+
 	Tcl_AddErrorInfo(info->interp, "\n    (epics get callback script)");
 	Tcl_BackgroundException(info->interp, code);
-	
+
 	/* this event was successfully handled */
 	return 1;
 }
@@ -516,66 +520,75 @@ static Tcl_Obj * EpicsValue2Tcl(struct event_handler_args args) {
 		/* scalar conversion */
 		switch (args.type) {
 			case DBR_DOUBLE: {
-				dbr_double_t val = *((dbr_double_t *)args.dbr);
-				return Tcl_NewDoubleObj(val);
-			}
+								 dbr_double_t val = *((dbr_double_t *)args.dbr);
+								 return Tcl_NewDoubleObj(val);
+							 }
 			case DBR_FLOAT:  {
-				dbr_float_t val = *((dbr_float_t *)args.dbr);
-				return Tcl_NewDoubleObj(val);
-			}
+								 dbr_float_t val = *((dbr_float_t *)args.dbr);
+								 return Tcl_NewDoubleObj(val);
+							 }
 
 #define INTVALCONV(CHTYPE, CTYPE) \
 			case CHTYPE: { \
-				CTYPE val = *((CTYPE *)args.dbr); \
-				return Tcl_NewWideIntObj(val); \
-			}
-		
-			INTVALCONV(DBR_ENUM, dbr_enum_t)
-			INTVALCONV(DBR_CHAR, dbr_char_t)
-			INTVALCONV(DBR_SHORT, dbr_short_t)
-			INTVALCONV(DBR_LONG, dbr_long_t)
-#undef INTVALCONV
+							 CTYPE val = *((CTYPE *)args.dbr); \
+							 return Tcl_NewWideIntObj(val); \
+						 }
 
+							 INTVALCONV(DBR_ENUM, dbr_enum_t)
+								 INTVALCONV(DBR_CHAR, dbr_char_t)
+								 INTVALCONV(DBR_SHORT, dbr_short_t)
+								 INTVALCONV(DBR_LONG, dbr_long_t)
+#undef INTVALCONV
+			case DBR_STRING: { /*
+								 dbr_string_t val;
+								 size_t i;
+								 for (i=0; i<MAX_STRING_SIZE; i++) {
+								 	val[i] = *((dbr_string_t *)args.dbr)[i];
+								 }	*/
+								 /* fixed-size array. Might not be NULL terminated */
+								 //val[MAX_STRING_SIZE-1] = '\0';
+								 return Tcl_NewStringObj(((dbr_string_t*) args.dbr)[0], -1);
+							 }
 			default:
-				return Tcl_NewStringObj("Some scalar value", -1);
+							 return Tcl_NewStringObj("Some scalar value", -1);
 		}
 	} else {
 #ifndef HAVE_VECTCL
-/* Construct an ordinary Tcl list */
+		/* Construct an ordinary Tcl list */
 		Tcl_Obj *result = Tcl_NewObj();
 		switch (args.type) {
 			case DBR_DOUBLE: {
-				dbr_double_t *vptr = ((dbr_double_t *)args.dbr);
-				unsigned n;
-				for (n=0; n<args.count; n++) {
-					Tcl_ListObjAppendElement(NULL, result, Tcl_NewDoubleObj(vptr[n]));
-				}
-				return result;
-			}
+								 dbr_double_t *vptr = ((dbr_double_t *)args.dbr);
+								 unsigned n;
+								 for (n=0; n<args.count; n++) {
+									 Tcl_ListObjAppendElement(NULL, result, Tcl_NewDoubleObj(vptr[n]));
+								 }
+								 return result;
+							 }
 			case DBR_FLOAT:  {
-				dbr_float_t *vptr = ((dbr_float_t *)args.dbr);
-				unsigned n;
-				for (n=0; n<args.count; n++) {
-					Tcl_ListObjAppendElement(NULL, result, Tcl_NewDoubleObj(vptr[n]));
-				}
-				return result;
-			}
+								 dbr_float_t *vptr = ((dbr_float_t *)args.dbr);
+								 unsigned n;
+								 for (n=0; n<args.count; n++) {
+									 Tcl_ListObjAppendElement(NULL, result, Tcl_NewDoubleObj(vptr[n]));
+								 }
+								 return result;
+							 }
 #define INTVALCONV(CHTYPE, CTYPE)\
 			case CHTYPE:  {\
-				CTYPE *vptr = ((CTYPE *)args.dbr);\
-				unsigned n;\
-				for (n=0; n<args.count; n++) {\
-					Tcl_ListObjAppendElement(NULL, result, Tcl_NewLongObj(vptr[n]));\
-				}\
-				return result;\
-			}
-			INTVALCONV(DBR_ENUM, dbr_enum_t)
-			INTVALCONV(DBR_CHAR, dbr_char_t)
-			INTVALCONV(DBR_SHORT, dbr_short_t)
-			INTVALCONV(DBR_LONG, dbr_long_t)
+							  CTYPE *vptr = ((CTYPE *)args.dbr);\
+							  unsigned n;\
+							  for (n=0; n<args.count; n++) {\
+								  Tcl_ListObjAppendElement(NULL, result, Tcl_NewLongObj(vptr[n]));\
+							  }\
+							  return result;\
+						  }
+							 INTVALCONV(DBR_ENUM, dbr_enum_t)
+								 INTVALCONV(DBR_CHAR, dbr_char_t)
+								 INTVALCONV(DBR_SHORT, dbr_short_t)
+								 INTVALCONV(DBR_LONG, dbr_long_t)
 #undef INTVALCONV
 		}
-	
+
 #endif
 	}
 
