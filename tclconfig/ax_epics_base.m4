@@ -112,7 +112,7 @@ AC_DEFUN([AX_EPICS_BASE],
     EPICS_OS_CLASS=`grep OS_CLASS $EPICS_BASE/configure/os/CONFIG.*Common.${epics_host_arch_main}* | head -1 | awk '{print $NF}'`
     # need to determine CMPLR_CLASS, which is *hard*, so
     # TODO: remove this hardcoded setting with the correct one from the EPICS configure directory
-    EPICS_CMPLR_CLASS=gcc
+    EPICS_CMPLR_CLASS=$(ls -1 $EPICS_BASE/include/compiler/)
     AC_MSG_CHECKING(for usable EPICS base libraries for $EPICS_OS_CLASS OS ($EPICS_CMPLR_CLASS compiler) and host architecture $EPICS_HOST_ARCH)
 
     succeeded=no
