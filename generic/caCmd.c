@@ -420,9 +420,8 @@ static int GetCmd(Tcl_Interp *interp, pvInfo *info, int objc, Tcl_Obj * const ob
 	ev->getCmdPrefix = cmdprefix;
 	Tcl_IncrRefCount(cmdprefix);
 
-	chtype gettype = info->type;
+	chtype gettype = GetTypeFromNative(info->type);
 	/* retrieve enums as string */
-	if (gettype == DBR_ENUM) { gettype = DBR_STRING; }
 	int code = ca_array_get_callback (gettype, info->nElem, info->id, getHandler, ev);
 	if (code != ECA_NORMAL) {
 		/* raise error */
@@ -442,6 +441,15 @@ static int GetCmd(Tcl_Interp *interp, pvInfo *info, int objc, Tcl_Obj * const ob
 	return TCL_OK;
 }
 
+static chtype GetTypeFromNative(chtype type) {
+	if (type == DBR_ENUM) {
+		/* request enums as string */
+		return DBR_TIME_STRING;
+	}
+	return dbf_type_to_DBR_TIME(type);
+}
+
+
 static void getHandler(struct event_handler_args args) {
 	/* the callback exec'ed from EPICS 
 	 * get succeeded */
@@ -455,16 +463,16 @@ static void getHandler(struct event_handler_args args) {
 		/* TODO background exception 
 		 * Must be postponed into Tcl event handler */
 	}
-
+	
 	/* Convert result into Tcl_Obj */
-	ev->data = EpicsValue2Tcl(args);
+    ev->data = EpicsValue2Tcl(args);
 	Tcl_IncrRefCount(ev->data);
-	Tcl_Obj *timestamp = EpicsTime2Tcl(args);
-	ev->metadata = Tcl_NewDictObj();
+	
+	ev->metadata = EpicsMeta2Tcl(args);
 	Tcl_IncrRefCount(ev->metadata);
-	Tcl_DictObjPut(NULL, ev->metadata, Tcl_NewStringObj("time", -1), timestamp);
-
+	
 	ev->ev.proc=getHandlerInvoke;
+	
 	Tcl_ThreadQueueEvent(info->thrid, (Tcl_Event*)ev, TCL_QUEUE_TAIL);
 	Tcl_ThreadAlert(info->thrid);
 }
@@ -515,88 +523,102 @@ bgerr:
 	return 1;
 }
 
-static Tcl_Obj * EpicsValue2Tcl(struct event_handler_args args) {
-	if (args.count == 1) {
-		/* scalar conversion */
-		switch (args.type) {
-			case DBR_DOUBLE: {
-								 dbr_double_t val = *((dbr_double_t *)args.dbr);
-								 return Tcl_NewDoubleObj(val);
-							 }
-			case DBR_FLOAT:  {
-								 dbr_float_t val = *((dbr_float_t *)args.dbr);
-								 return Tcl_NewDoubleObj(val);
-							 }
+static Tcl_Obj * EpicsValue2Tcl(struct event_handler_args args)
+{
 
-#define INTVALCONV(CHTYPE, CTYPE) \
-			case CHTYPE: { \
-							 CTYPE val = *((CTYPE *)args.dbr); \
-							 return Tcl_NewWideIntObj(val); \
-						 }
-
-							 INTVALCONV(DBR_ENUM, dbr_enum_t)
-								 INTVALCONV(DBR_CHAR, dbr_char_t)
-								 INTVALCONV(DBR_SHORT, dbr_short_t)
-								 INTVALCONV(DBR_LONG, dbr_long_t)
-#undef INTVALCONV
-			case DBR_STRING: { /*
-								 dbr_string_t val;
-								 size_t i;
-								 for (i=0; i<MAX_STRING_SIZE; i++) {
-								 	val[i] = *((dbr_string_t *)args.dbr)[i];
-								 }	*/
-								 /* fixed-size array. Might not be NULL terminated */
-								 //val[MAX_STRING_SIZE-1] = '\0';
-								 return Tcl_NewStringObj(((dbr_string_t*) args.dbr)[0], -1);
-							 }
-			default:
-							 return Tcl_NewStringObj("Some scalar value", -1);
-		}
-	} else {
 #ifndef HAVE_VECTCL
-		/* Construct an ordinary Tcl list */
-		Tcl_Obj *result = Tcl_NewObj();
-		switch (args.type) {
-			case DBR_DOUBLE: {
-								 dbr_double_t *vptr = ((dbr_double_t *)args.dbr);
-								 unsigned n;
-								 for (n=0; n<args.count; n++) {
-									 Tcl_ListObjAppendElement(NULL, result, Tcl_NewDoubleObj(vptr[n]));
-								 }
-								 return result;
-							 }
-			case DBR_FLOAT:  {
-								 dbr_float_t *vptr = ((dbr_float_t *)args.dbr);
-								 unsigned n;
-								 for (n=0; n<args.count; n++) {
-									 Tcl_ListObjAppendElement(NULL, result, Tcl_NewDoubleObj(vptr[n]));
-								 }
-								 return result;
-							 }
-#define INTVALCONV(CHTYPE, CTYPE)\
-			case CHTYPE:  {\
-							  CTYPE *vptr = ((CTYPE *)args.dbr);\
+	/* Construct an ordinary Tcl list */
+	switch (args.type) {
+	case DBR_TIME_DOUBLE:{
+			struct dbr_time_double *vptr = ((struct dbr_time_double *)args.dbr);
+			if (args.count == 1) {
+				return Tcl_NewDoubleObj(vptr->value);
+			} else {
+				double         *dptr = &vptr->value;
+				unsigned	n;
+				Tcl_Obj        *result = Tcl_NewObj();
+				for (n = 0; n < args.count; n++) {
+					Tcl_ListObjAppendElement(NULL, result, Tcl_NewDoubleObj(dptr[n]));
+				}
+				return result;
+			}
+		}
+	case DBR_TIME_FLOAT:{
+			struct dbr_time_float *vptr = ((struct dbr_time_float *)args.dbr);
+			if (args.count == 1) {
+				return Tcl_NewDoubleObj(vptr->value);
+			} else {
+				float          *dptr = &vptr->value;
+				unsigned	n;
+				Tcl_Obj        *result = Tcl_NewObj();
+				for (n = 0; n < args.count; n++) {
+					Tcl_ListObjAppendElement(NULL, result, Tcl_NewDoubleObj(dptr[n]));
+				}
+				return result;
+			}
+		}
+#define INTVALCONV(CHTYPE, STYPE, CTYPE) \
+		case CHTYPE:  {\
+						  struct STYPE *vptr = ((struct STYPE *)args.dbr);\
+						  if (args.count ==1) { \
+							  return Tcl_NewLongObj(vptr->value); \
+						  } else { \
 							  unsigned n;\
+							  CTYPE *dptr = &vptr->value; \
+							  Tcl_Obj *result=Tcl_NewObj(); \
 							  for (n=0; n<args.count; n++) {\
-								  Tcl_ListObjAppendElement(NULL, result, Tcl_NewLongObj(vptr[n]));\
+								  Tcl_ListObjAppendElement(NULL, result, Tcl_NewLongObj(dptr[n]));\
 							  }\
 							  return result;\
-						  }
-							 INTVALCONV(DBR_ENUM, dbr_enum_t)
-								 INTVALCONV(DBR_CHAR, dbr_char_t)
-								 INTVALCONV(DBR_SHORT, dbr_short_t)
-								 INTVALCONV(DBR_LONG, dbr_long_t)
+						  } \
+					  }
+		INTVALCONV(DBR_TIME_ENUM, dbr_time_enum, dbr_enum_t)
+		INTVALCONV(DBR_TIME_CHAR, dbr_time_char, dbr_char_t)
+		INTVALCONV(DBR_TIME_SHORT, dbr_time_short, dbr_short_t)
+		INTVALCONV(DBR_TIME_LONG, dbr_time_long, dbr_long_t)
 #undef INTVALCONV
+	case DBR_TIME_STRING:{
+			return Tcl_NewStringObj(((struct dbr_time_string *)args.dbr)->value, -1);
 		}
+	}
 
 #endif
-	}
+
 
 	return Tcl_NewStringObj("Some vector value", -1);
 }
 
-static Tcl_Obj * EpicsTime2Tcl(struct event_handler_args args) {
-	return Tcl_NewDoubleObj(3.1415926);
+static Tcl_Obj * EpicsMeta2Tcl(struct event_handler_args args) {
+	Tcl_Obj *meta = Tcl_NewDictObj();
+	switch (args.type) {
+#define TIMETYPE(CHTYPE, CTYPE) \
+		case CHTYPE: {\
+			struct CTYPE val = *((struct CTYPE*)args.dbr);\
+			Tcl_DictObjPut(NULL, meta, Tcl_NewStringObj("status", -1), Tcl_NewLongObj(val.status));\
+			Tcl_DictObjPut(NULL, meta, Tcl_NewStringObj("severity", -1), Tcl_NewLongObj(val.severity));\
+			/* convert time stamp into float seconds from Unix epoch */\
+			double ftime = val.stamp.secPastEpoch;\
+			ftime += POSIX_TIME_AT_EPICS_EPOCH;\
+			ftime += val.stamp.nsec*1e-9;\
+			Tcl_DictObjPut(NULL, meta, Tcl_NewStringObj("time", -1), Tcl_NewDoubleObj(ftime));\
+			/* put request status converted into string */\
+\
+			Tcl_DictObjPut(NULL, meta, Tcl_NewStringObj("reqstatus", -1), Tcl_NewLongObj(args.status));\
+			Tcl_DictObjPut(NULL, meta, Tcl_NewStringObj("message", -1), Tcl_NewStringObj(ca_message(args.status), -1));\
+			break;\
+		}
+		TIMETYPE(DBR_TIME_STRING, dbr_time_string);
+		TIMETYPE(DBR_TIME_SHORT, dbr_time_short);
+		TIMETYPE(DBR_TIME_FLOAT, dbr_time_float);
+		TIMETYPE(DBR_TIME_ENUM, dbr_time_enum);
+		TIMETYPE(DBR_TIME_CHAR, dbr_time_char);
+		TIMETYPE(DBR_TIME_LONG, dbr_time_long);
+		TIMETYPE(DBR_TIME_DOUBLE, dbr_time_double);
+
+	}
+	
+	
+	return meta;
 }
 
 /* Mutex to protect the monitor script; may not change while
@@ -638,7 +660,8 @@ static int MonitorCmd(Tcl_Interp *interp, pvInfo *info, int objc, Tcl_Obj * cons
 	/* Else setup the monitor with a */
 	info->monitorprefix = cmdprefix;
 	Tcl_IncrRefCount(cmdprefix);
-	code = ca_create_subscription(info->type, info->nElem, info->id, DBE_VALUE, 
+	chtype gettype = GetTypeFromNative(info->type);
+	code = ca_create_subscription(gettype, info->nElem, info->id, DBE_VALUE, 
 		monitorHandler, info, &info->monitorid);
 	
 	CACHECKTCL(DecrIfNotNull(&info->monitorprefix); Tcl_MutexUnlock(&monitorMutex));
@@ -681,11 +704,9 @@ static void monitorHandler(struct event_handler_args args) {
 	/* Convert result into Tcl_Obj */
     ev->data = EpicsValue2Tcl(args);
 	Tcl_IncrRefCount(ev->data);
-	Tcl_Obj *timestamp = EpicsTime2Tcl(args);
 	
-	ev->metadata = Tcl_NewDictObj();
+	ev->metadata = EpicsMeta2Tcl(args);
 	Tcl_IncrRefCount(ev->metadata);
-	Tcl_DictObjPut(info->interp, ev->metadata, Tcl_NewStringObj("time", -1), timestamp);
 	
 	ev->ev.proc=getHandlerInvoke;
 

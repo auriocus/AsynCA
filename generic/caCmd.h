@@ -75,6 +75,8 @@ static int  putHandlerInvoke(Tcl_Event *p, int flags); /* the event handler run 
 
 static int GetEpicsValueFromObj(Tcl_Interp *interp, Tcl_Obj *obj, chtype type, long count, chtype *otype, void **dbr);
 
+static chtype GetTypeFromNative(chtype type);
+
 static int GetCmd(Tcl_Interp *interp, pvInfo *info, int objc, Tcl_Obj * const objv[]);
 typedef struct {
 	Tcl_Event ev;
@@ -90,7 +92,7 @@ static int  getHandlerInvoke(Tcl_Event *p, int flags); /* the event handler run 
 
 /* convert EPICS data into Tcl_Obj */
 static Tcl_Obj * EpicsValue2Tcl(struct event_handler_args args);
-static Tcl_Obj * EpicsTime2Tcl(struct event_handler_args args);
+static Tcl_Obj * EpicsMeta2Tcl(struct event_handler_args args);
 
 /* convert Tcl_Obj into C representation for EPICS */
 static int GetEpicsValueFromObj(Tcl_Interp *interp, Tcl_Obj *obj, chtype type, long count, chtype *otype, void **dbr);
