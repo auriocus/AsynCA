@@ -11,7 +11,7 @@ char * ckstrdup(const char *input) {
 	return dup;
 }
 
-inline void DecrIfNotNull(Tcl_Obj** o) {
+static inline void DecrIfNotNull(Tcl_Obj** o) {
 	if (*o) {
 		Tcl_DecrRefCount(*o);
 		*o=NULL;
@@ -207,19 +207,26 @@ static int InstanceCmd(ClientData clientData, Tcl_Interp *interp, int objc, Tcl_
 }
 
 static int PutCmd(Tcl_Interp *interp, pvInfo *info, int objc, Tcl_Obj * const objv[]) {
-	if (objc != 5) {
-		Tcl_WrongNumArgs(interp, 2, objv, "<value> -command <cmdprefix>");
+	if (objc != 5 && objc != 3) {
+		Tcl_WrongNumArgs(interp, 2, objv, "<value> ?-command <cmdprefix>?");
 		return TCL_ERROR;
 	}
 
-	Tcl_Obj *value  = objv[2];
-	Tcl_Obj *cmdopt = objv[3];
-	Tcl_Obj *cmdprefix = objv[4];
+	int callback = (objc == 5);
 
-	/* check that the option is -command */
-	if (strcmp(Tcl_GetString(cmdopt), "-command") != 0) {
-		Tcl_SetObjResult(interp, Tcl_NewStringObj("Unknown option, must be -command", -1));
-		return TCL_ERROR;
+	Tcl_Obj *value  = objv[2];
+	Tcl_Obj *cmdopt = NULL;
+	Tcl_Obj *cmdprefix = NULL;
+	
+	if (callback) {
+		cmdopt = objv[3];
+		cmdprefix = objv[4];
+
+		/* check that the option is -command */
+		if (strcmp(Tcl_GetString(cmdopt), "-command") != 0) {
+			Tcl_SetObjResult(interp, Tcl_NewStringObj("Unknown option, must be -command", -1));
+			return TCL_ERROR;
+		}
 	}
 
 	/* Convert value into the EPICS record format */
@@ -233,7 +240,7 @@ static int PutCmd(Tcl_Interp *interp, pvInfo *info, int objc, Tcl_Obj * const ob
 	putEvent *ev = ckalloc(sizeof(putEvent));
 	ev->info = info;
 	ev->putCmdPrefix = cmdprefix;
-	Tcl_IncrRefCount(ev->putCmdPrefix);
+	if (cmdprefix) Tcl_IncrRefCount(ev->putCmdPrefix);
 	ev->code = TCL_OK;
 
 	int code = ca_array_put_callback (puttype, info->nElem, info->id, dbr, putHandler, ev);
@@ -251,12 +258,17 @@ static int PutCmd(Tcl_Interp *interp, pvInfo *info, int objc, Tcl_Obj * const ob
 static void putHandler(struct event_handler_args args) {
 	/* put operation is finished */
 	putEvent *pev = args.usr;
-	pvInfo *info = pev->info;
 
-	pev->ev.proc=putHandlerInvoke;
-	pev->code = args.status;
-	Tcl_ThreadQueueEvent(info->thrid, (Tcl_Event*)pev, TCL_QUEUE_TAIL);
-	Tcl_ThreadAlert(info->thrid);
+	if (pev->putCmdPrefix) {
+		pvInfo *info = pev->info;
+
+		pev->ev.proc=putHandlerInvoke;
+		pev->code = args.status;
+		Tcl_ThreadQueueEvent(info->thrid, (Tcl_Event*)pev, TCL_QUEUE_TAIL);
+		Tcl_ThreadAlert(info->thrid);
+	} else {
+		ckfree(pev);
+	}
 }
 
 static int  putHandlerInvoke(Tcl_Event *p, int flags) {
@@ -272,9 +284,18 @@ static int  putHandlerInvoke(Tcl_Event *p, int flags) {
 
 	/* append result data and metadata dict */
 	int code = Tcl_ListObjAppendElement(info->interp, script, Tcl_NewWideIntObj(ev->code));
+	
 	if (code != TCL_OK) {
 		goto bgerr;
 	}
+
+	code = Tcl_ListObjAppendElement(info->interp, script, Tcl_NewStringObj(ca_message(ev->code), -1));
+	
+	if (code != TCL_OK) {
+		goto bgerr;
+	}
+
+
 
 	Tcl_Preserve(info->interp);
 	code = Tcl_EvalObjEx(info->interp, script, TCL_EVAL_GLOBAL);
@@ -295,7 +316,6 @@ bgerr:
 	/* this event was successfully handled */
 	return 1;
 
-	return 1;
 }
 
 
