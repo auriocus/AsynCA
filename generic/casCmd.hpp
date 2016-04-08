@@ -6,7 +6,7 @@
 #include <tcl.h>
 #include "casExport.h"
 
-#include <fdMgr.h>
+#include <fdmgr.h>
 
 struct GetRequestEvent {
 	Tcl_Event ev;

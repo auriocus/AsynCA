@@ -246,6 +246,8 @@ static int PutCmd(Tcl_Interp *interp, pvInfo *info, int objc, Tcl_Obj * const ob
 		return TCL_ERROR;
 	}
 
+	//printf("Data type %d, native %d\n", (int)puttype, (int)(info->type));
+	
 	/* Issue put operation */
 	putEvent *ev = ckalloc(sizeof(putEvent));
 	ev->info = info;
@@ -254,7 +256,7 @@ static int PutCmd(Tcl_Interp *interp, pvInfo *info, int objc, Tcl_Obj * const ob
 	ev->code = TCL_OK;
 
 	int code = ca_array_put_callback (puttype, info->nElem, info->id, dbr, putHandler, ev);
-
+	
 	CACHECKTCL(ckfree(dbr); Tcl_DecrRefCount(ev->putCmdPrefix); ckfree(ev));
 
 	code = ca_flush_io();
@@ -355,6 +357,7 @@ static int GetEpicsValueFromObj(Tcl_Interp *interp, Tcl_Obj *obj, chtype type, l
 							 CTYPE *dbuf = ckalloc(sizeof(CTYPE));\
 							 *dbuf = tval; \
 							 *dbr = dbuf;\
+							 *otype = type; \
 							 return TCL_OK; \
 						 }
 
@@ -397,22 +400,23 @@ static int GetEpicsValueFromObj(Tcl_Interp *interp, Tcl_Obj *obj, chtype type, l
 					dbr_string_t *vptr = ckalloc(sizeof(dbr_string_t));
 					int len;
 					char *buf = Tcl_GetStringFromObj(obj, &len);
-					if (len > MAX_ENUM_STRING_SIZE) {
+					if (len+1 > MAX_ENUM_STRING_SIZE) {
 						Tcl_SetObjResult(interp, Tcl_NewStringObj("String too long for enum", -1));
 						return TCL_ERROR;
 					}
-					strncpy(*vptr, buf, len);
+					strncpy(*vptr, buf, len+1);
+					//printf("Putting string %s\n", *vptr);
 					*dbr = vptr;
 					*otype = DBR_STRING;
 					return TCL_OK;
-			}
+				}
 
-			dbr_enum_t *vptr = ckalloc(sizeof(dbr_enum_t));
-			*vptr = val;
+				dbr_enum_t *vptr = ckalloc(sizeof(dbr_enum_t));
+				*vptr = val;
 
-			*dbr = vptr;
-			*otype = type;
-			return TCL_OK;
+				*dbr = vptr;
+				*otype = type;
+				return TCL_OK;
 		   }
 			default: {
 				Tcl_SetObjResult(interp, Tcl_NewStringObj("Unsupported data type", -1));
@@ -453,6 +457,7 @@ static int GetCmd(Tcl_Interp *interp, pvInfo *info, int objc, Tcl_Obj * const ob
 	chtype gettype = GetTypeFromNative(info->type);
 	/* retrieve enums as string */
 	int code = ca_array_get_callback (gettype, info->nElem, info->id, getHandler, ev);
+	//printf("Data type %d\n", (int)(gettype));
 	if (code != ECA_NORMAL) {
 		/* raise error */
 		ckfree(ev);

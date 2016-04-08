@@ -11,7 +11,7 @@ proc cainfo {pv} {
 	puts "[$pv type]"
 }
 
-set pv [AsynCA::connect jane -command pvack]
+set pv [AsynCA::connect asynca:jane -command pvack]
 vwait connected
 
 cainfo $pv
