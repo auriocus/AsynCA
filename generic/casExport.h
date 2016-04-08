@@ -6,7 +6,6 @@ extern "C" {
 #endif
 
 int startServerCmd(ClientData clientData, Tcl_Interp *interp, int objc, Tcl_Obj * const objv[]); 
-int createPVCmd(ClientData clientData, Tcl_Interp *interp, int objc, Tcl_Obj * const objv[]); 
 
 #ifdef __cplusplus
 }

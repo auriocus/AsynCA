@@ -809,8 +809,7 @@ int Asynca_Init(Tcl_Interp* interp) {
 	}
 	
 	Tcl_CreateObjCommand(interp, "::AsynCA::connect", ConnectCmd, NULL, NULL);
-	Tcl_CreateObjCommand(interp, "::AsynCA::startserver", startServerCmd, NULL, NULL);
-	Tcl_CreateObjCommand(interp, "::AsynCA::createPV", createPVCmd, NULL, NULL);
+	Tcl_CreateObjCommand(interp, "::AsynCA::server", startServerCmd, NULL, NULL);
 
 	/* initialize EPICS library */
 	if (ca_context_create (ca_enable_preemptive_callback) != ECA_NORMAL) {
