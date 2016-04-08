@@ -30,7 +30,7 @@ AC_INIT([AsynCA], [0.1])
 TEA_INIT([3.7])
 
 # activate C++ support
-#TEA_INIT_CXX
+TEA_INIT_CXX
 
 AC_CONFIG_AUX_DIR(tclconfig)
 
@@ -76,10 +76,11 @@ AC_TYPE_INTPTR_T
 
 TEA_ADD_SOURCES([
 caCmd.c
+casCmd.cpp
 ])
 TEA_ADD_HEADERS([])
 TEA_ADD_INCLUDES([])
-TEA_ADD_LIBS([])
+TEA_ADD_LIBS([-lcas -lca -lCom -lgdd])
 TEA_ADD_CFLAGS([])
 TEA_ADD_STUB_SOURCES([])
 TEA_ADD_TCL_SOURCES([])

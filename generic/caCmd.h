@@ -4,14 +4,7 @@
 #include <cadef.h>
 #undef INLINE /* conflicting definition from Tcl and EPICS */
 #include <tcl.h>
-#include <string.h>
-#include <stdlib.h>
-#ifdef HAVE_STDINT_H
-# include <stdint.h>
-#endif
-#ifdef HAVE_UNISTD_H
-# include <unistd.h>
-#endif
+#include "casExport.h"
 
 /* caCheckTcl raises an error if code is an EPICS error */
 #define CACHECKTCL(cleanup) \
@@ -22,10 +15,8 @@
 		return TCL_ERROR; \
 	} 
 
-
 /* Process variable object */
 typedef struct {
-	Tcl_Mutex mutex;
 	chid id; /* the EPICS connection ID for this channel */
 	
 	const char *name; /* PV name */
@@ -99,5 +90,6 @@ static int GetEpicsValueFromObj(Tcl_Interp *interp, Tcl_Obj *obj, chtype type, l
 
 static int MonitorCmd(Tcl_Interp *interp, pvInfo *info, int objc, Tcl_Obj * const objv[]);
 static void monitorHandler(struct event_handler_args args); /* the callback exec'ed from EPICS */
+
 
 #endif

@@ -4,6 +4,16 @@
 
 #include "caCmd.h"
 
+#include <string.h>
+#include <stdlib.h>
+#ifdef HAVE_STDINT_H
+# include <stdint.h>
+#endif
+#ifdef HAVE_UNISTD_H
+# include <unistd.h>
+#endif
+
+
 char * ckstrdup(const char *input) {
 	int length = strlen(input);
 	char *dup = ckalloc(length+1);
@@ -794,6 +804,8 @@ int Asynca_Init(Tcl_Interp* interp) {
 	}
 	
 	Tcl_CreateObjCommand(interp, "::AsynCA::connect", ConnectCmd, NULL, NULL);
+	Tcl_CreateObjCommand(interp, "::AsynCA::startserver", startServerCmd, NULL, NULL);
+	Tcl_CreateObjCommand(interp, "::AsynCA::createPV", createPVCmd, NULL, NULL);
 
 	/* initialize EPICS library */
 	if (ca_context_create (ca_enable_preemptive_callback) != ECA_NORMAL) {
