@@ -42,67 +42,26 @@ static Tcl_ThreadCreateType EpicsEventLoop (ClientData clientData)
 	TCL_THREAD_CREATE_RETURN;
 }
 
+TCLCLASSIMPLEMENT(AsynServer, test, test2);
+
 // server instance
-AsynServer::AsynServer (Tcl_Interp *interp, int objc, Tcl_Obj * const objv[]) {
+AsynServer::AsynServer (ClientData cdata, Tcl_Interp *interp, int objc, Tcl_Obj * const objv[]) {
 	if (objc != 1) {
 		Tcl_WrongNumArgs(interp, 1, objv, "");
 		throw(TCL_ERROR);
 	}
 }
 
-AsynServer::~AsynServer() { }
+AsynServer::~AsynServer() { printf("Asynserver dying!\n"); }
 
-int AsynServer::test(Tcl_Interp *interp, int objc, Tcl_Obj * const objv[]) {
+int AsynServer::test(int objc, Tcl_Obj * const objv[]) {
 	Tcl_SetObjResult(interp, Tcl_NewStringObj("test", -1));
 	return TCL_OK;
 }
 
-int AsynServer::test2(Tcl_Interp *interp, int objc, Tcl_Obj * const objv[]) {
+int AsynServer::test2(int objc, Tcl_Obj * const objv[]) {
 	Tcl_SetObjResult(interp, Tcl_NewStringObj("test2", -1));
 	return TCL_OK;
 }
 
-static int AsynServerCreateCmd(ClientData cdata, Tcl_Interp *interp, int objc, Tcl_Obj * const objv[]) {
-	static int counter = 0;
 
-	/* create Server */
-	try {
-		AsynServer *instance = new AsynServer(interp, objc, objv);
-
-		/* Create object name */
-		char objName[50 + TCL_INTEGER_SPACE];
-		sprintf(objName, "::AsynCA::AsynServer%d", ++counter);
-		Tcl_CreateObjCommand(interp, objName, AsynServerInstanceCmd, (ClientData) instance, AsynServerDeleteCmd);
-		
-		Tcl_SetObjResult(interp, Tcl_NewStringObj(objName, -1));
-
-		return TCL_OK;
-
-	} catch(int code) {
-		return code;
-	}
-}
-
-
-static int AsynServerInstanceCmd(ClientData cdata, Tcl_Interp *interp, int objc, Tcl_Obj * const objv[]) {
-	if (objc < 2) {
-		Tcl_WrongNumArgs(interp, 1, objv, "method");
-		return TCL_ERROR;
-	}
-
-	int index;
-	
-	if (Tcl_GetIndexFromObjStruct(interp, objv[1], 
-		AsynServerSubCmdTable, sizeof(AsynServerSubCmdEntry), 
-		"method", 0, &index) != TCL_OK) {
-		
-		return TCL_ERROR;
-	}	
-
-	AsynServer *instance = static_cast<AsynServer *>(cdata);
-	return (instance->*(AsynServerSubCmdTable[index].fun)) (interp, objc, objv);
-}
-
-static void AsynServerDeleteCmd(ClientData cdata) {
-	delete static_cast<AsynServer *>(cdata);
-}
