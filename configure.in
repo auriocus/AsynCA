@@ -31,6 +31,7 @@ TEA_INIT([3.7])
 
 # activate C++ support
 TEA_INIT_CXX
+AX_CXX_COMPILE_STDCXX(11)
 
 AC_CONFIG_AUX_DIR(tclconfig)
 
