@@ -14,6 +14,10 @@ int startServerCmd(ClientData clientData, Tcl_Interp *interp, int objc, Tcl_Obj 
 	/* Start thread with the EPICS event loop */
 	static Tcl_ThreadId id = NULL;    /* holds identity of thread created */
 
+	int code = AsynServerCreateCmd(clientData, interp, objc, objv);
+	
+	if (code != TCL_OK) { return TCL_ERROR; }
+
 	/* Run a singleton EPICS event thread, if the first server is started */
 	if (id == NULL) {
 		if (Tcl_CreateThread(&id, EpicsEventLoop, static_cast<ClientData>(NULL),
@@ -25,18 +29,22 @@ int startServerCmd(ClientData clientData, Tcl_Interp *interp, int objc, Tcl_Obj 
 		}
 	}
 	/* All cleaned up nicely */
-	return AsynServerCreateCmd(clientData, interp, objc, objv);
+
+	return TCL_OK;
 }
 
 static Tcl_ThreadCreateType EpicsEventLoop (ClientData clientData)
 {
 	//Tcl_ThreadId mainid = static_cast<Tcl_ThreadId> (clientData);
 	/* Run epics select loop */
+	fileDescriptorManager.process(1.0);
 	while (true) {
-		fileDescriptorManager.process(1000.0);
+		// printf("Boing \n");
+		fileDescriptorManager.process(100.0);
 	}
 	TCL_THREAD_CREATE_RETURN;
 }
+
 
 TCLCLASSIMPLEMENT(AsynServer, createPV, findPV, listPV);
 
@@ -49,7 +57,15 @@ AsynServer::AsynServer (ClientData cdata, Tcl_Interp *interp, int objc, Tcl_Obj 
 		throw(TCL_ERROR);
 	}
 	mainid = Tcl_GetCurrentThread();
-}
+	setDebugLevel(10);
+#if 0
+	/* run an event loop for 10s */
+	for (int t=0; t<10; t++) {
+		fileDescriptorManager.process(1000.0);
+		printf("Boing \n");
+	}
+#endif
+}	
 
 AsynServer::~AsynServer() { 
 	/* destroy all PVs from the map */
@@ -111,7 +127,7 @@ int AsynServer::findPV(int objc, Tcl_Obj * const objv[]) {
 
 	auto pvit = PVs.find(std::string(Tcl_GetString(objv[1])));
 	if (pvit != PVs.end()) {
-		Tcl_SetObjResult(interp, string2Tcl(pvit->second->PVname));
+		Tcl_SetObjResult(interp, string2Tcl(pvit->second->getName()));
 	}
 	return TCL_OK;
 }
@@ -133,15 +149,43 @@ void AsynServer::removePV(std::string name) {
 	}
 }
 
+// More advanced pvExistTest() isnt needed so we forward to
+// original version. This avoids sun pro warnings and speeds 
+// up execution.
+//
+pvExistReturn AsynServer::pvExistTest (const casCtx & ctx, const caNetAddr &, const char * pPVName)
+{
+	return pvExistTest ( ctx, pPVName );
+}
+
+pvExistReturn AsynServer::pvExistTest
+    ( const casCtx& ctxIn, const char * pPVName )
+{
+   	auto pvit = PVs.find(pPVName);
+	if (pvit == PVs.end()) {
+        return pverDoesNotExistHere;
+	} else {
+        return pverExistsHere;
+	}
+}
+
+pvAttachReturn AsynServer::pvAttach(const casCtx &, const char * pPVName ) {
+	auto pvit = PVs.find(pPVName);
+	if (pvit == PVs.end()) {
+        return S_casApp_pvNotFound;
+	} else {
+        return pvit->second->rawPV;
+	}
+}
+
 TCLCLASSIMPLEMENTEXPLICIT(AsynPV, read, write, name);
 
 AsynPV::AsynPV(AsynServer &server, std::string name, aitEnum type, unsigned int count) : 
-	server(server), PVname(name),
-	type(type), count(count) {
+	server(server), rawPV(name, type, count) {
 }
 
 AsynPV::~AsynPV() {
-	server.removePV(PVname);
+	server.removePV(rawPV.PVname);
 }
 
 int AsynPV::read(int objc, Tcl_Obj * const objv[]) {
@@ -156,9 +200,17 @@ int AsynPV::write(int objc, Tcl_Obj * const objv[]) {
 }
 
 int AsynPV::name(int obj, Tcl_Obj * const objv[]) {
-	Tcl_SetObjResult(interp, string2Tcl(PVname));
+	Tcl_SetObjResult(interp, string2Tcl(rawPV.PVname));
 	return TCL_OK;
 }
 	
+
+AsynCasPV::AsynCasPV(std::string PVname, aitEnum type, unsigned int count) :
+	PVname(PVname), type(type), count(count) {
+}
+
+const char *AsynCasPV::getName() const {
+	return PVname.c_str();
+}
 
 
