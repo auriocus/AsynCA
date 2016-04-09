@@ -9,7 +9,14 @@ extern "C" { \
 	static int CLASS ## CreateCmd(ClientData cdata, Tcl_Interp *interp, int objc, Tcl_Obj * const objv[]); \
 	static int CLASS ## InstanceCmd(ClientData cdata, Tcl_Interp *interp, int objc, Tcl_Obj * const objv[]); \
 	static void CLASS ## DeleteCmd(ClientData cdata); \
-\
+	static int CLASS ## Link(Tcl_Interp *interp, CLASS *instance); \
+}
+
+#define TCLCLASSDECLAREEXPLICIT(CLASS) \
+extern "C" { \
+	static int CLASS ## InstanceCmd(ClientData cdata, Tcl_Interp *interp, int objc, Tcl_Obj * const objv[]); \
+	static void CLASS ## DeleteCmd(ClientData cdata); \
+	static int CLASS ## Link(Tcl_Interp *interp, CLASS *instance); \
 }
 
 #define INSTANCECMDENTRY(CLASS, FUN) { #FUN, &CLASS::FUN },
@@ -24,30 +31,37 @@ extern "C" { \
 		{ NULL, NULL } \
 	};
 
-#define TCLCLASSIMPLEMENT(CLASS, ...) \
-	TCLCLASSSUBCMDS(CLASS, __VA_ARGS__) \
+#define TCLCLASSCREATECMD(CLASS) \
 	static int CLASS ## CreateCmd(ClientData cdata, Tcl_Interp *interp, int objc, Tcl_Obj * const objv[]) {\
-		static int counter = 0;\
-\
 		/* create instance */\
 		try {\
 			CLASS  *instance = new CLASS(cdata, interp, objc, objv);\
-\
-			instance->interp=interp; \
-			/* Create object name */\
-			Tcl_Obj* instName=Tcl_ObjPrintf("::AsynCA::" #CLASS "%d", ++counter);\
-			Tcl_Command token = Tcl_CreateObjCommand(interp, Tcl_GetString(instName), CLASS ## InstanceCmd, (ClientData) instance, CLASS ## DeleteCmd);\
-			instance->ThisCmd = token; \
-			Tcl_SetObjResult(interp, instName);\
-\
+			if (CLASS ## Link(interp, instance) != TCL_OK) { return TCL_ERROR; } \
 			return TCL_OK;\
 \
 		} catch(int code) {\
 			return code;\
 		}\
 	}\
+
+#define TCLCLASSLINK(CLASS) \
+	static int CLASS ## Link(Tcl_Interp *interp, CLASS *instance) {\
+		static int counter = 0;\
 \
 \
+		instance->interp=interp; \
+		/* Create object name */\
+		Tcl_Obj* instName=Tcl_ObjPrintf("::AsynCA::" #CLASS "%d", ++counter);\
+		Tcl_Command token = Tcl_CreateObjCommand(interp, Tcl_GetString(instName), CLASS ## InstanceCmd, (ClientData) instance, CLASS ## DeleteCmd);\
+		instance->ThisCmd = token; \
+		Tcl_SetObjResult(interp, instName);\
+		return TCL_OK;\
+\
+	}\
+
+
+#define TCLCLASSINSTANCECMD(CLASS, ...) \
+	TCLCLASSSUBCMDS(CLASS, __VA_ARGS__) \
 	static int CLASS ## InstanceCmd(ClientData cdata, Tcl_Interp *interp, int objc, Tcl_Obj * const objv[]) {\
 		if (objc < 2) {\
 			Tcl_WrongNumArgs(interp, 1, objv, "method");\
@@ -66,7 +80,8 @@ extern "C" { \
 		CLASS  *instance = static_cast<CLASS *>(cdata);\
 		return (instance->*(CLASS ## SubCmdTable[index].fun)) (objc, objv);\
 	}\
-\
+
+#define TCLCLASSDELETECMD(CLASS) \
 	static void CLASS ## DeleteCmd(ClientData cdata) {\
 		CLASS *instance = static_cast<CLASS *>(cdata);\
 		if (instance->ThisCmd) { \
@@ -74,6 +89,18 @@ extern "C" { \
 			delete instance;\
 		} \
 	}
+
+
+#define TCLCLASSIMPLEMENT(CLASS, ...) \
+	TCLCLASSCREATECMD(CLASS) \
+	TCLCLASSLINK(CLASS) \
+	TCLCLASSINSTANCECMD(CLASS, __VA_ARGS__) \
+	TCLCLASSDELETECMD(CLASS)
+
+#define TCLCLASSIMPLEMENTEXPLICIT(CLASS, ...) \
+	TCLCLASSLINK(CLASS) \
+	TCLCLASSINSTANCECMD(CLASS, __VA_ARGS__) \
+	TCLCLASSDELETECMD(CLASS)
 
 
 class TclClass {
@@ -86,6 +113,8 @@ public:
 	}
 
 	virtual ~TclClass () {
+
+		printf("Running Destructor from TclClass\n");
 		if (ThisCmd && interp) {
 			/* break destructor loop. Signal DeleteCmd that the object is
 			 * down already by setting ThisCmd to 0*/
@@ -93,13 +122,21 @@ public:
 			ThisCmd = NULL;
 			Tcl_DeleteCommandFromToken(interp, cmd);
 			interp = NULL;
+		} else {
+			printf("Already dead\n");
 		}
 	}
 
 	int destroy(int objc, Tcl_Obj * const objv[]) {
 		delete this;
 		return TCL_OK;
-	}	
+	}
+
+	Tcl_Obj * GetCommandFullName() {
+		Tcl_Obj *result = Tcl_NewObj();
+		Tcl_GetCommandFullName(interp, ThisCmd, result);
+		return result;
+	}
 };
 
 #endif
