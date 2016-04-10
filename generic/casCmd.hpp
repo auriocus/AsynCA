@@ -2,6 +2,7 @@
 #define CASCMD_H
 
 #include <casdef.h>
+#include <gddAppFuncTable.h>
 #undef INLINE /* conflicting definition from Tcl and EPICS */
 #include <tcl.h>
 #include "casExport.h"
@@ -56,18 +57,55 @@ public:
 
 TCLCLASSDECLARE(AsynServer)
 
+class AsynPV;
+
 // PV object to return to the CAS library
 class AsynCasPV : public casPV {
 public:
-	AsynCasPV(std::string PVname, aitEnum type, unsigned int count);
-	const char * getName() const;
+	AsynCasPV(AsynPV &asynPV, std::string PVname, aitEnum type, unsigned int count);
+	
+	/* back reference to Tcl object */
+	AsynPV &asynPV;
 	
 	const std::string PVname;
 	const aitEnum type;
 	const unsigned int count;
+	std::string units;
+	int precision;
+	double highlimit;
+	double lowlimit;
+	
+	/* the data store - should be a gdd polymorphic type in the end */
+	double data;
+	
+	// Overloads from CAS server library
+	const char * getName() const;
+	aitEnum bestExternalType () const;
+
+	caStatus read ( const casCtx &, gdd & protoIn );
+	caStatus write ( const casCtx &, const gdd & valueIn );
 	
 	// don't kill this PV from the server library
-	void destroy() { } 
+	void destroy() { }    
+	
+	gddAppFuncTableStatus getPrecision(gdd &value);
+    gddAppFuncTableStatus getHighLimit(gdd &value);
+    gddAppFuncTableStatus getLowLimit(gdd &value);
+    gddAppFuncTableStatus getUnits(gdd &value);
+    gddAppFuncTableStatus getValue(gdd &value);
+    gddAppFuncTableStatus getEnums(gdd &value);
+
+    // return vector size of this
+	// process variable
+	unsigned maxDimension() const;
+    aitIndex maxBound (unsigned dimension) const;
+    //
+    // static
+    //
+    static gddAppFuncTable<AsynCasPV> ft;
+    static bool hasBeenInitialized;
+	static void initFT();
+ 
 };
 
 
@@ -76,7 +114,8 @@ class AsynPV : public TclClass {
 public:
     AsynPV(AsynServer &server, std::string PVname, aitEnum type, unsigned int count);
     ~AsynPV();
-
+	
+	/* write and read from perspective of the server */
 	int write(int objc, Tcl_Obj * const objv[]);
 	int read(int objc, Tcl_Obj * const objv[]);
 	int name(int objc, Tcl_Obj * const objv[]);
@@ -85,6 +124,9 @@ public:
 	
 	AsynServer &server;	
 	AsynCasPV rawPV;
+
+	Tcl_Obj *writeCmdPrefix;
+	Tcl_Obj *readCmdPrefix;
 };
 
 TCLCLASSDECLAREEXPLICIT(AsynPV)

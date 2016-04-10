@@ -15,6 +15,7 @@ int startServerCmd(ClientData clientData, Tcl_Interp *interp, int objc, Tcl_Obj 
 	static Tcl_ThreadId id = NULL;    /* holds identity of thread created */
 
 	int code = AsynServerCreateCmd(clientData, interp, objc, objv);
+	AsynCasPV::initFT(); /* initialize dispatch table */
 	
 	if (code != TCL_OK) { return TCL_ERROR; }
 
@@ -181,7 +182,7 @@ pvAttachReturn AsynServer::pvAttach(const casCtx &, const char * pPVName ) {
 TCLCLASSIMPLEMENTEXPLICIT(AsynPV, read, write, name);
 
 AsynPV::AsynPV(AsynServer &server, std::string name, aitEnum type, unsigned int count) : 
-	server(server), rawPV(name, type, count) {
+	server(server), rawPV(*this, name, type, count) {
 }
 
 AsynPV::~AsynPV() {
@@ -194,8 +195,28 @@ int AsynPV::read(int objc, Tcl_Obj * const objv[]) {
 }
 
 int AsynPV::write(int objc, Tcl_Obj * const objv[]) {
-	Tcl_SetObjResult(interp, Tcl_NewStringObj("write", -1));
-	/* postIOnotify */
+	if (objc != 3) {
+		Tcl_WrongNumArgs(interp, 2, objv, "value");
+		return TCL_ERROR;
+	}
+	
+	if (rawPV.count != 1) {
+		Tcl_SetObjResult(interp, Tcl_ObjPrintf("Unimplemented vector put for %d items, must be 1", rawPV.count));
+		return TCL_ERROR;
+	}
+
+	if (rawPV.type != aitEnumFloat64) {
+		Tcl_SetObjResult(interp, Tcl_ObjPrintf("Unimplemented data type %d, must be %d (double)", rawPV.type, aitEnumFloat64));
+		return TCL_ERROR;
+	}
+
+	double val;
+	if (Tcl_GetDoubleFromObj(interp, objv[2], &val) != TCL_OK) {
+		return TCL_ERROR;
+	}
+	/* finally put it */
+	rawPV.data = val;
+	/* postIOnotify, needed for camonitor */
 	return TCL_OK;
 }
 
@@ -205,12 +226,126 @@ int AsynPV::name(int obj, Tcl_Obj * const objv[]) {
 }
 	
 
-AsynCasPV::AsynCasPV(std::string PVname, aitEnum type, unsigned int count) :
-	PVname(PVname), type(type), count(count) {
+AsynCasPV::AsynCasPV(AsynPV &asynPV, std::string PVname, aitEnum type, unsigned int count) :
+	asynPV(asynPV), PVname(PVname), type(type), count(count), 
+	highlimit(10.0), lowlimit(0.0), precision(6), units("mm"), data(3.14159) {
+}
+
+
+/* Dispatch table */
+bool AsynCasPV::hasBeenInitialized = false;
+gddAppFuncTable<AsynCasPV> AsynCasPV::ft;
+
+void AsynCasPV::initFT ()
+{
+    if ( AsynCasPV::hasBeenInitialized ) {
+            return;
+    }
+
+    //
+    // time stamp, status, and severity are extracted from the
+    // GDD associated with the "value" application type.
+    //
+    AsynCasPV::ft.installReadFunc ("value", &AsynCasPV::getValue);
+    AsynCasPV::ft.installReadFunc ("precision", &AsynCasPV::getPrecision);
+    AsynCasPV::ft.installReadFunc ("graphicHigh", &AsynCasPV::getHighLimit);
+    AsynCasPV::ft.installReadFunc ("graphicLow", &AsynCasPV::getLowLimit);
+    AsynCasPV::ft.installReadFunc ("controlHigh", &AsynCasPV::getHighLimit);
+    AsynCasPV::ft.installReadFunc ("controlLow", &AsynCasPV::getLowLimit);
+    AsynCasPV::ft.installReadFunc ("alarmHigh", &AsynCasPV::getHighLimit);
+    AsynCasPV::ft.installReadFunc ("alarmLow", &AsynCasPV::getLowLimit);
+    AsynCasPV::ft.installReadFunc ("alarmHighWarning", &AsynCasPV::getHighLimit);
+    AsynCasPV::ft.installReadFunc ("alarmLowWarning", &AsynCasPV::getLowLimit);
+    AsynCasPV::ft.installReadFunc ("units", &AsynCasPV::getUnits);
+	AsynCasPV::ft.installReadFunc ("enums", &AsynCasPV::getEnums);
+
+    AsynCasPV::hasBeenInitialized = true;
+}
+
+
+caStatus AsynCasPV::getPrecision ( gdd & prec )
+{
+    prec.put(precision);
+    return S_cas_success;
+}
+
+caStatus AsynCasPV::getHighLimit ( gdd & value )
+{
+    value.put(highlimit);
+    return S_cas_success;
+}
+
+caStatus AsynCasPV::getLowLimit ( gdd & value )
+{
+    value.put(lowlimit);
+    return S_cas_success;
+}
+
+caStatus AsynCasPV::getUnits( gdd & unitstring )
+{
+	aitString str(units.c_str());
+
+    unitstring.put(str);
+    return S_cas_success;
+}
+
+//
+// exPV::getEnums()
+//
+// returns the eneumerated state strings
+// for a discrete channel
+//
+// The PVs in this example are purely analog,
+// and therefore this isnt appropriate in an
+// analog context ...
+//
+caStatus AsynCasPV::getEnums ( gdd & enumsIn )
+{
+    if ( type == aitEnumEnum16 ) {
+        return S_cas_success;
+    }
+
+    return S_cas_success;
+}
+
+//
+// exPV::getValue()
+//
+caStatus AsynCasPV::getValue ( gdd & value )
+{
+    value.put(data);
+    return S_cas_success;
+
 }
 
 const char *AsynCasPV::getName() const {
 	return PVname.c_str();
 }
 
+
+aitEnum AsynCasPV::bestExternalType () const
+{ return type; }
+
+
+
+unsigned AsynCasPV::maxDimension() const {
+	if (count==1) { return 0; }
+	return 1;
+}
+
+aitIndex AsynCasPV::maxBound (unsigned dimension) const {
+	if (dimension == 0) return count;
+	return 0;
+}	
+
+caStatus AsynCasPV::read ( const casCtx &, gdd & protoIn )
+{
+    return ft.read ( *this, protoIn );
+}
+
+caStatus AsynCasPV::write ( const casCtx &, const gdd & valueIn ) 
+{
+	/* a write is silently ignored for now */
+	return S_casApp_success;
+}
 
