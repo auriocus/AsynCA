@@ -3,6 +3,12 @@
 
 #include <casdef.h>
 #include <gddAppFuncTable.h>
+#include <gddApps.h>
+#include <epicsTime.h>
+#include <epicsTimer.h>
+#include <smartGDDPointer.h>
+#include <caEventMask.h>
+#include <fdManager.h>
 #undef INLINE /* conflicting definition from Tcl and EPICS */
 #include <tcl.h>
 #include "casExport.h"
@@ -30,13 +36,30 @@ extern "C" {
 	static Tcl_ThreadCreateProc EpicsEventLoop;
 }
 
+class PipeObject {
+public:
+	int writefd;
+	int readfd;
+	PipeObject();
+	~PipeObject();
+};
+
+
+class wakeupEpicsLoopFD : public PipeObject, public fdReg {
+public:	
+	wakeupEpicsLoopFD();
+	void callBack();
+	void send(char msg='w');
+};
+
 class AsynPV;
 
 // server instance
-class AsynServer : public TclClass, caServer {
+class AsynServer : public TclClass, public caServer {
 	Tcl_ThreadId mainid;
 	std::unordered_map<std::string, AsynPV*> PVs;
 	bool alive;
+	/* std::atomic_bool activate; */
 public:
     AsynServer (ClientData cdata, Tcl_Interp *interp, int objc, Tcl_Obj * const objv[]);
     ~AsynServer();
@@ -53,6 +76,11 @@ public:
 	pvExistReturn pvExistTest(const casCtx& ctxIn, const char * pPVName);
 	pvExistReturn pvExistTest(const casCtx & ctx, const caNetAddr &, const char * pPVName);
     pvAttachReturn pvAttach(const casCtx &, const char * pPVName );
+    
+	// tell the event loop to process the new asynchronous events
+	void wakeup();
+
+	wakeupEpicsLoopFD * alertfd;
 };
 
 TCLCLASSDECLARE(AsynServer)
@@ -76,7 +104,7 @@ public:
 	double lowlimit;
 	
 	/* the data store - should be a gdd polymorphic type in the end */
-	double data;
+    smartGDDPointer data;
 	
 	// Overloads from CAS server library
 	const char * getName() const;

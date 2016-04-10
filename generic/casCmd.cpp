@@ -3,7 +3,6 @@
  */
 
 #include "casCmd.hpp"
-#include <fdManager.h>
 
 
 /* Create a new process variable object and return it
@@ -46,11 +45,42 @@ static Tcl_ThreadCreateType EpicsEventLoop (ClientData clientData)
 	TCL_THREAD_CREATE_RETURN;
 }
 
+PipeObject::PipeObject() {
+	int fd[2];
+	if (pipe(fd)==-1) {
+		printf("Error creating pipe - hm :(\n");
+	}
+	readfd=fd[0];
+	writefd=fd[1];
+}
+
+PipeObject::~PipeObject() {
+	close(writefd);
+	close(readfd);
+}
+
+wakeupEpicsLoopFD::wakeupEpicsLoopFD() :
+	PipeObject(), fdReg(readfd, fdrRead, false)
+{
+	/* create a pipe */
+
+}
+
+void wakeupEpicsLoopFD::callBack() {
+	char msg;
+	int bytesread = read(readfd, &msg, 1);
+	//printf("Loop woken up: %c\n", msg);
+}
+
+void wakeupEpicsLoopFD::send(char msg) {
+	write(writefd, &msg, 1);
+}
+
 
 TCLCLASSIMPLEMENT(AsynServer, createPV, findPV, listPV);
 
 // server instance
-AsynServer::AsynServer (ClientData cdata, Tcl_Interp *interp, int objc, Tcl_Obj * const objv[]) :
+AsynServer::AsynServer(ClientData cdata, Tcl_Interp *interp, int objc, Tcl_Obj * const objv[]) :
 	alive(true)
 {
 	if (objc != 1) {
@@ -59,6 +89,7 @@ AsynServer::AsynServer (ClientData cdata, Tcl_Interp *interp, int objc, Tcl_Obj 
 	}
 	mainid = Tcl_GetCurrentThread();
 	setDebugLevel(10);
+	alertfd = new wakeupEpicsLoopFD();
 #if 0
 	/* run an event loop for 10s */
 	for (int t=0; t<10; t++) {
@@ -75,6 +106,7 @@ AsynServer::~AsynServer() {
 		delete p.second;
 	}
 
+	delete alertfd;
 	printf("AsynServer dying!\n"); 
 }
 
@@ -179,6 +211,10 @@ pvAttachReturn AsynServer::pvAttach(const casCtx &, const char * pPVName ) {
 	}
 }
 
+void  AsynServer::wakeup() {
+	alertfd->send();
+}
+
 TCLCLASSIMPLEMENTEXPLICIT(AsynPV, read, write, name);
 
 AsynPV::AsynPV(AsynServer &server, std::string name, aitEnum type, unsigned int count) : 
@@ -214,9 +250,18 @@ int AsynPV::write(int objc, Tcl_Obj * const objv[]) {
 	if (Tcl_GetDoubleFromObj(interp, objv[2], &val) != TCL_OK) {
 		return TCL_ERROR;
 	}
-	/* finally put it */
-	rawPV.data = val;
-	/* postIOnotify, needed for camonitor */
+	/* finally put it and update the time stamp */
+	rawPV.data->put(val);
+	
+	aitTimeStamp gddts(epicsTime::getCurrent());
+	rawPV.data->setTimeStamp(&gddts);
+	
+	/* postEvent, needed for camonitor */
+    casEventMask select ( server.valueEventMask() | server.logEventMask() );
+	rawPV.postEvent(select, *rawPV.data);
+	/* postEvent does not wake up the fileDescriptorManager event loop 
+	 * Ask the server to activate the wakeup socket */
+	server.wakeup();
 	return TCL_OK;
 }
 
@@ -228,7 +273,10 @@ int AsynPV::name(int obj, Tcl_Obj * const objv[]) {
 
 AsynCasPV::AsynCasPV(AsynPV &asynPV, std::string PVname, aitEnum type, unsigned int count) :
 	asynPV(asynPV), PVname(PVname), type(type), count(count), 
-	highlimit(10.0), lowlimit(0.0), precision(6), units("mm"), data(3.14159) {
+	highlimit(10.0), lowlimit(0.0), precision(6), units("mm") 
+{
+	data = new gddScalar(gddAppType_value, type);
+	data->put(3.14159);
 }
 
 
@@ -308,14 +356,25 @@ caStatus AsynCasPV::getEnums ( gdd & enumsIn )
     return S_cas_success;
 }
 
-//
-// exPV::getValue()
-//
 caStatus AsynCasPV::getValue ( gdd & value )
 {
-    value.put(data);
-    return S_cas_success;
+    caStatus status;
 
+    if (data.valid()) {
+        gddStatus gdds;
+
+        gdds = gddApplicationTypeTable::app_table.smartCopy ( &value, & (*this->data) );
+        if (gdds) {
+            status = S_cas_noConvert;   
+        }
+        else {
+            status = S_cas_success;
+        }
+    }
+    else {
+        status = S_casApp_undefined;
+    }
+    return status;
 }
 
 const char *AsynCasPV::getName() const {
