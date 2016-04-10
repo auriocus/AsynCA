@@ -226,7 +226,9 @@ AsynPV::~AsynPV() {
 }
 
 int AsynPV::read(int objc, Tcl_Obj * const objv[]) {
-	Tcl_SetObjResult(interp, Tcl_NewStringObj("read", -1));
+	aitFloat64 val;
+	rawPV.data->getConvert(val);
+	Tcl_SetObjResult(interp, Tcl_NewDoubleObj(val));
 	return TCL_OK;
 }
 
@@ -257,13 +259,18 @@ int AsynPV::write(int objc, Tcl_Obj * const objv[]) {
 	rawPV.data->setTimeStamp(&gddts);
 	
 	/* postEvent, needed for camonitor */
+	postUpdateEvent();
+	return TCL_OK;
+}
+
+void AsynPV::postUpdateEvent() {
     casEventMask select ( server.valueEventMask() | server.logEventMask() );
 	rawPV.postEvent(select, *rawPV.data);
 	/* postEvent does not wake up the fileDescriptorManager event loop 
 	 * Ask the server to activate the wakeup socket */
 	server.wakeup();
-	return TCL_OK;
 }
+
 
 int AsynPV::name(int obj, Tcl_Obj * const objv[]) {
 	Tcl_SetObjResult(interp, string2Tcl(rawPV.PVname));
@@ -404,7 +411,11 @@ caStatus AsynCasPV::read ( const casCtx &, gdd & protoIn )
 
 caStatus AsynCasPV::write ( const casCtx &, const gdd & valueIn ) 
 {
-	/* a write is silently ignored for now */
+	/* Move data to internal storage
+	 * Typechecks and conversions are performed in the server library */
+	data->put(&valueIn);
+	/* a write does not inform other clients. Post event */
+	asynPV.postUpdateEvent();
 	return S_casApp_success;
 }
 

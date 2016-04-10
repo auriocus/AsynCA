@@ -148,6 +148,9 @@ public:
 	int read(int objc, Tcl_Obj * const objv[]);
 	int name(int objc, Tcl_Obj * const objv[]);
 
+	/* publish event if it changes */
+	void postUpdateEvent();
+
 	const std::string getName() const { return rawPV.PVname; }
 	
 	AsynServer &server;	
