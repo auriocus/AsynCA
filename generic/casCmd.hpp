@@ -31,6 +31,13 @@ static inline Tcl_Obj * string2Tcl(std::string s) {
 	return Tcl_NewStringObj(s.c_str(), s.length());
 }
 
+static inline void DecrIfNotNull(Tcl_Obj*& o) {
+	if (o) {
+		Tcl_DecrRefCount(o);
+		o=NULL;
+	}
+}
+
 
 extern "C" {
 	static Tcl_ThreadCreateProc EpicsEventLoop;
@@ -98,10 +105,10 @@ public:
 	const std::string PVname;
 	const aitEnum type;
 	const unsigned int count;
-	std::string units;
-	int precision;
-	double highlimit;
 	double lowlimit;
+	double highlimit;
+	unsigned int precision;
+	std::string units;
 	
 	/* the data store - should be a gdd polymorphic type in the end */
     smartGDDPointer data;
@@ -147,7 +154,16 @@ public:
 	int write(int objc, Tcl_Obj * const objv[]);
 	int read(int objc, Tcl_Obj * const objv[]);
 	int name(int objc, Tcl_Obj * const objv[]);
+	
+	int readcommand(int objc, Tcl_Obj * const objv[]);
+	int writecommand(int objc, Tcl_Obj * const objv[]);
+	int lowlimit(int objc, Tcl_Obj * const objv[]);
+	int highlimit(int objc, Tcl_Obj * const objv[]);
+	int precision(int objc, Tcl_Obj * const objv[]);
+	int units(int objc, Tcl_Obj * const objv[]);
 
+	int commandfun(int objc, Tcl_Obj * const objv[], Tcl_Obj* &prefix);
+	
 	/* publish event if it changes */
 	void postUpdateEvent();
 
@@ -156,9 +172,65 @@ public:
 	AsynServer &server;	
 	AsynCasPV rawPV;
 
-	Tcl_Obj *writeCmdPrefix;
 	Tcl_Obj *readCmdPrefix;
+	Tcl_Obj *writeCmdPrefix;
 };
+
+TCL_DECLARE_MUTEX(CmdMutex);
+
+template <typename CType> Tcl_Obj* NewTclObj(CType value);
+
+template <> Tcl_Obj* NewTclObj(double value) { return Tcl_NewDoubleObj(value); }
+template <> Tcl_Obj* NewTclObj(unsigned int value) { return Tcl_NewWideIntObj(value); }
+template <> Tcl_Obj* NewTclObj(std::string value) { return Tcl_NewStringObj(value.c_str(), -1); }
+
+
+template <typename CType> int FromTclObj(Tcl_Interp * interp, Tcl_Obj* value, CType &out);
+template <> int FromTclObj(Tcl_Interp * interp, Tcl_Obj* value, double &out) { 
+	return Tcl_GetDoubleFromObj(interp, value, &out);
+}
+
+template <> int FromTclObj(Tcl_Interp * interp, Tcl_Obj* value, unsigned int &out) {
+	Tcl_WideInt v;
+	if (Tcl_GetWideIntFromObj(interp, value, &v) != TCL_OK) { return TCL_ERROR; }
+	out = v;
+	if (out != v) {
+		Tcl_SetObjResult(interp, Tcl_NewStringObj("Value out of range", -1));
+		return TCL_ERROR;
+	}
+	return TCL_OK;
+}
+
+template <> int FromTclObj(Tcl_Interp * interp, Tcl_Obj* value, std::string &out) { 
+	out = Tcl_GetString(value);
+	return TCL_OK;
+}
+
+template <typename CType> 
+int property(Tcl_Interp *interp, int objc, Tcl_Obj * const objv[], CType & prop, const char *desc) {
+	if (objc != 2 && objc != 3) {
+		Tcl_WrongNumArgs(interp, 2, objv, desc);
+		return TCL_ERROR;
+	}
+
+	Tcl_MutexLock(&CmdMutex);
+	
+	/* get value  */
+	if (objc == 2) {
+		Tcl_SetObjResult(interp, NewTclObj<CType>(prop));
+
+		Tcl_MutexUnlock(&CmdMutex);
+		return TCL_OK;
+	}
+
+	/* set value */
+	Tcl_Obj *value = objv[2];
+	
+	int code = FromTclObj<CType>(interp, value, prop);
+	Tcl_MutexUnlock(&CmdMutex);
+	return code;
+}
+
 
 TCLCLASSDECLAREEXPLICIT(AsynPV)
 #endif

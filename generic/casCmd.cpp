@@ -105,7 +105,9 @@ AsynServer::~AsynServer() {
 	for (auto &p: PVs) {
 		delete p.second;
 	}
-
+	
+	/* wake up the notifier to inform that the PVs are gone */
+	wakeup();
 	delete alertfd;
 	printf("AsynServer dying!\n"); 
 }
@@ -215,10 +217,13 @@ void  AsynServer::wakeup() {
 	alertfd->send();
 }
 
-TCLCLASSIMPLEMENTEXPLICIT(AsynPV, read, write, name);
+TCLCLASSIMPLEMENTEXPLICIT(AsynPV, name, read, write, readcommand, writecommand, lowlimit, highlimit, precision, units);
 
 AsynPV::AsynPV(AsynServer &server, std::string name, aitEnum type, unsigned int count) : 
-	server(server), rawPV(*this, name, type, count) {
+	server(server), rawPV(*this, name, type, count),
+	readCmdPrefix(NULL), writeCmdPrefix(NULL)
+{
+
 }
 
 AsynPV::~AsynPV() {
@@ -272,15 +277,81 @@ void AsynPV::postUpdateEvent() {
 }
 
 
-int AsynPV::name(int obj, Tcl_Obj * const objv[]) {
+int AsynPV::name(int objc, Tcl_Obj * const objv[]) {
+	if (objc != 2) {
+		Tcl_WrongNumArgs(interp, 2, objv, "");
+		return TCL_ERROR;
+	}
 	Tcl_SetObjResult(interp, string2Tcl(rawPV.PVname));
 	return TCL_OK;
 }
+
+
+int AsynPV::commandfun(int objc, Tcl_Obj * const objv[], Tcl_Obj *& prefix) {
+	if (objc != 2 && objc != 3) {
+		Tcl_WrongNumArgs(interp, 2, objv, "?prefix?");
+		return TCL_ERROR;
+	}
+
+	Tcl_MutexLock(&CmdMutex);
 	
+	/* get callback for asynchronously reading the PV */
+	if (objc == 2) {
+		if (prefix) {
+			Tcl_SetObjResult(interp, prefix);
+		}
+
+		Tcl_MutexUnlock(&CmdMutex);
+		return TCL_OK;
+	}
+
+	/* set callback for asynchronously reading the PV */
+	Tcl_Obj *script = objv[2];
+
+	/* remove the old callback script. */
+	DecrIfNotNull(prefix);
+	prefix = NULL;
+	
+	/* check if the script is empty, which means delete the callback 
+	 * If not, copy the new script */
+	int len;
+	Tcl_GetStringFromObj(script, &len);
+	if (len != 0) {
+		Tcl_IncrRefCount(script);
+		prefix = script;
+	}
+
+	Tcl_MutexUnlock(&CmdMutex);
+	return TCL_OK;
+}
+
+int AsynPV::readcommand(int objc, Tcl_Obj * const objv[]) {
+	return commandfun(objc, objv, readCmdPrefix);
+}
+
+int AsynPV::writecommand(int objc, Tcl_Obj * const objv[]) {
+	return commandfun(objc, objv, writeCmdPrefix);
+}
+
+int AsynPV::lowlimit(int objc, Tcl_Obj * const objv[]) {
+	return property(interp, objc, objv, rawPV.lowlimit, "?limit?");
+}
+
+int AsynPV::highlimit(int objc, Tcl_Obj * const objv[]) {
+	return property(interp, objc, objv, rawPV.highlimit, "?limit?");
+}
+
+int AsynPV::precision(int objc, Tcl_Obj * const objv[]) {
+	return property(interp, objc, objv, rawPV.precision, "?digits?");
+}
+
+int AsynPV::units(int objc, Tcl_Obj * const objv[]) {
+	return property(interp, objc, objv, rawPV.units, "?units?");
+}
 
 AsynCasPV::AsynCasPV(AsynPV &asynPV, std::string PVname, aitEnum type, unsigned int count) :
 	asynPV(asynPV), PVname(PVname), type(type), count(count), 
-	highlimit(10.0), lowlimit(0.0), precision(6), units("mm") 
+	lowlimit(0.0), highlimit(10.0), precision(6), units("mm") 
 {
 	data = new gddScalar(gddAppType_value, type);
 	data->put(3.14159);
@@ -365,23 +436,11 @@ caStatus AsynCasPV::getEnums ( gdd & enumsIn )
 
 caStatus AsynCasPV::getValue ( gdd & value )
 {
-    caStatus status;
 
-    if (data.valid()) {
-        gddStatus gdds;
+    gddStatus gdds=value.put(&(*data));
+	gddPrintError(gdds);
 
-        gdds = gddApplicationTypeTable::app_table.smartCopy ( &value, & (*this->data) );
-        if (gdds) {
-            status = S_cas_noConvert;   
-        }
-        else {
-            status = S_cas_success;
-        }
-    }
-    else {
-        status = S_casApp_undefined;
-    }
-    return status;
+    return S_cas_success;
 }
 
 const char *AsynCasPV::getName() const {
