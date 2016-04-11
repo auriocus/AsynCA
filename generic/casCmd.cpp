@@ -45,6 +45,34 @@ static Tcl_ThreadCreateType EpicsEventLoop (ClientData clientData)
 	TCL_THREAD_CREATE_RETURN;
 }
 
+static int GetGddFromTclObj(Tcl_Interp *interp, Tcl_Obj *value, gdd & storage) {
+	/* Try to convert the Tcl_Obj into the data type of the gdd.
+	 * Return a Tcl success code */
+	
+	if (storage.dimension() != 0) {
+		if (interp)
+			Tcl_SetObjResult(interp, Tcl_ObjPrintf("Unimplemented vector put for %d items, must be 1", storage.dimension()));
+		return TCL_ERROR;
+	}
+
+	if (storage.primitiveType() != aitEnumFloat64) {
+		if (interp)
+			Tcl_SetObjResult(interp, Tcl_ObjPrintf("Unimplemented data type %d, must be %d (double)", storage.primitiveType(), aitEnumFloat64));
+		return TCL_ERROR;
+	}
+
+	double d;
+	if (Tcl_GetDoubleFromObj(interp, value, &d) != TCL_OK) {
+		return TCL_ERROR;
+	}
+	/* finally put it and update the time stamp */
+	storage.put(d);
+	
+	aitTimeStamp gddts(epicsTime::getCurrent());
+	storage.setTimeStamp(&gddts);
+	return TCL_OK;
+}
+
 PipeObject::PipeObject() {
 	int fd[2];
 	if (pipe(fd)==-1) {
@@ -88,7 +116,7 @@ AsynServer::AsynServer(ClientData cdata, Tcl_Interp *interp, int objc, Tcl_Obj *
 		throw(TCL_ERROR);
 	}
 	mainid = Tcl_GetCurrentThread();
-	setDebugLevel(10);
+	//setDebugLevel(10);
 	alertfd = new wakeupEpicsLoopFD();
 #if 0
 	/* run an event loop for 10s */
@@ -151,7 +179,8 @@ int AsynServer::createPV(int objc, Tcl_Obj * const objv[]) {
 	/* create PV */
 	AsynPV *pv = new AsynPV(*this, name, type, count);
 	PVs[name] = pv;
-	return AsynPVLink(interp, pv);
+	Tcl_SetObjResult(interp, AsynPVAliasCreate(interp, pv));
+	return TCL_OK;
 }
 
 int AsynServer::findPV(int objc, Tcl_Obj * const objv[]) {
@@ -243,26 +272,10 @@ int AsynPV::write(int objc, Tcl_Obj * const objv[]) {
 		return TCL_ERROR;
 	}
 	
-	if (rawPV.count != 1) {
-		Tcl_SetObjResult(interp, Tcl_ObjPrintf("Unimplemented vector put for %d items, must be 1", rawPV.count));
+	if (GetGddFromTclObj(interp, objv[2], *rawPV.data) != TCL_OK) {
 		return TCL_ERROR;
 	}
 
-	if (rawPV.type != aitEnumFloat64) {
-		Tcl_SetObjResult(interp, Tcl_ObjPrintf("Unimplemented data type %d, must be %d (double)", rawPV.type, aitEnumFloat64));
-		return TCL_ERROR;
-	}
-
-	double val;
-	if (Tcl_GetDoubleFromObj(interp, objv[2], &val) != TCL_OK) {
-		return TCL_ERROR;
-	}
-	/* finally put it and update the time stamp */
-	rawPV.data->put(val);
-	
-	aitTimeStamp gddts(epicsTime::getCurrent());
-	rawPV.data->setTimeStamp(&gddts);
-	
 	/* postEvent, needed for camonitor */
 	postUpdateEvent();
 	return TCL_OK;
@@ -463,9 +476,29 @@ aitIndex AsynCasPV::maxBound (unsigned dimension) const {
 	return 0;
 }	
 
-caStatus AsynCasPV::read ( const casCtx &, gdd & protoIn )
+caStatus AsynCasPV::read ( const casCtx & ctx, gdd & protoIn )
 {
-    return ft.read ( *this, protoIn );
+	/* check if this needs to be completed asynchronously */
+	if (asynPV.readCmdPrefix) {
+		Tcl_MutexLock(&CmdMutex);
+		/* construct an asynchronous read object */
+		AsynCAReadRequest *request = new AsynCAReadRequest(asynPV, ctx, protoIn);
+		/* schedule an event to create the alias in the Tcl thread
+		 * and call the associated callback */
+		ReadRequestEvent *ev = (ReadRequestEvent *) ckalloc(sizeof(ReadRequestEvent)); 
+		// event must be alloc'ed from Tcl
+		ev->ev.proc=readRequestInvoke;
+		ev->request = request;
+		ev->interp = asynPV.interp;
+		Tcl_ThreadQueueEvent(asynPV.server.mainid, (Tcl_Event*)ev, TCL_QUEUE_TAIL);
+		Tcl_ThreadAlert(asynPV.server.mainid);
+
+		Tcl_MutexUnlock(&CmdMutex);
+		return S_casApp_asyncCompletion;	
+	} else {
+		/* synchronous execution */
+		return ft.read ( *this, protoIn );
+	}
 }
 
 caStatus AsynCasPV::write ( const casCtx &, const gdd & valueIn ) 
@@ -477,4 +510,89 @@ caStatus AsynCasPV::write ( const casCtx &, const gdd & valueIn )
 	asynPV.postUpdateEvent();
 	return S_casApp_success;
 }
+
+
+AsynCAReadRequest::AsynCAReadRequest (AsynPV & pv, const casCtx & ctx, gdd & retvalue) :
+	pv (pv), retvalue(retvalue), completed(false)
+{
+	rawRequest = new casAsyncReadIO(ctx);
+}
+
+
+AsynCAReadRequest::~AsynCAReadRequest () {
+	if (!completed) {
+		/* somehow we were destroyed without a return value
+		 * e.g. by calling destroy from Tcl. Signal to the EPICS client
+		 * that asynchronous operation has failed */
+
+		rawRequest->postIOCompletion(S_casApp_canceledAsyncIO, *retvalue);
+		pv.server.wakeup();
+	}
+}
+
+TCLCLASSIMPLEMENTEXPLICIT(AsynCAReadRequest, return_);
+
+int AsynCAReadRequest::return_ (int objc, Tcl_Obj *const objv[]) {
+	int code; 
+	if (objc != 3) {
+		Tcl_WrongNumArgs(interp, 2, objv, "value");
+		code = TCL_ERROR;
+		rawRequest->postIOCompletion(S_casApp_canceledAsyncIO, *retvalue);
+	} else {
+		code = GetGddFromTclObj(interp, objv[2], *retvalue);
+		if (code == TCL_OK) {
+			/* signal successful completion and 
+			 * return value to EPICS client */
+			rawRequest->postIOCompletion(S_cas_success, *retvalue);
+		} else {
+			rawRequest->postIOCompletion(S_casApp_canceledAsyncIO, *retvalue);
+		}
+	}
+	completed = true;
+	pv.server.wakeup();
+	return code;
+}
+
+static void bgcallscript(Tcl_Interp *interp, Tcl_Obj *cmd, Tcl_Obj *instName) {
+	/* Runs in Tcl thread after construction, to make it complete */
+
+	Tcl_Obj *script = Tcl_DuplicateObj(cmd);
+	Tcl_IncrRefCount(script);
+
+	/* append result data and metadata dict */
+	int code = Tcl_ListObjAppendElement(interp, script, instName);
+	if (code != TCL_OK) {
+		goto bgerr;
+	}
+
+	Tcl_Preserve(interp);
+	code = Tcl_EvalObjEx(interp, script, TCL_EVAL_GLOBAL);
+
+	if (code != TCL_OK) { goto bgerr; }
+
+	Tcl_Release(interp);
+	Tcl_DecrRefCount(script);
+	/* this event was successfully handled */
+	return; 
+bgerr:
+	/* put error in background */
+	Tcl_DecrRefCount(script);
+
+	Tcl_AddErrorInfo(interp, "\n    (epics asynchronous callback script)");
+	Tcl_BackgroundException(interp, code);
+
+	/* this event was successfully handled */
+	return;
+}
+
+int readRequestInvoke(Tcl_Event *p, int flags) {
+	/* the event handler run from Tcl */
+	ReadRequestEvent *ev = reinterpret_cast<ReadRequestEvent *>(p);
+	AsynCAReadRequest *request = ev->request;
+	Tcl_Obj *instName = AsynCAReadRequestAliasCreate(ev->interp, request);
+
+	bgcallscript(ev->interp, request->pv.readCmdPrefix, instName);
+	return 1;
+}
+
 

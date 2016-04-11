@@ -19,12 +19,6 @@
 #include <string>
 
 
-struct GetRequestEvent {
-	Tcl_Event ev;
-	casPV *PV;
-};
-
-
 /* utility to convert a std::string into a new Tcl_Obj */
 
 static inline Tcl_Obj * string2Tcl(std::string s) {
@@ -38,6 +32,7 @@ static inline void DecrIfNotNull(Tcl_Obj*& o) {
 	}
 }
 
+static int GetGddFromTclObj(Tcl_Interp *interp, Tcl_Obj *value, gdd & storage);
 
 extern "C" {
 	static Tcl_ThreadCreateProc EpicsEventLoop;
@@ -63,11 +58,11 @@ class AsynPV;
 
 // server instance
 class AsynServer : public TclClass, public caServer {
+public:
 	Tcl_ThreadId mainid;
 	std::unordered_map<std::string, AsynPV*> PVs;
 	bool alive;
-	/* std::atomic_bool activate; */
-public:
+	
     AsynServer (ClientData cdata, Tcl_Interp *interp, int objc, Tcl_Obj * const objv[]);
     ~AsynServer();
 
@@ -176,6 +171,8 @@ public:
 	Tcl_Obj *writeCmdPrefix;
 };
 
+TCLCLASSDECLAREEXPLICIT(AsynPV)
+
 TCL_DECLARE_MUTEX(CmdMutex);
 
 template <typename CType> Tcl_Obj* NewTclObj(CType value);
@@ -231,6 +228,28 @@ int property(Tcl_Interp *interp, int objc, Tcl_Obj * const objv[], CType & prop,
 	return code;
 }
 
+class AsynCAReadRequest : public TclClass {
+public:
+    AsynCAReadRequest (AsynPV &pv, const casCtx & ctx, gdd & retvalue);
+	/* Runs in Tcl thread after construction, to make it complete */
+	void callscript();
+    
+	virtual ~AsynCAReadRequest ();
+	int return_ (int objc, Tcl_Obj *const objv[]);
 
-TCLCLASSDECLAREEXPLICIT(AsynPV)
+	casAsyncReadIO *rawRequest;
+    AsynPV & pv;
+    smartGDDPointer retvalue;
+	bool completed;
+};
+
+TCLCLASSDECLAREEXPLICIT(AsynCAReadRequest)
+
+struct ReadRequestEvent {
+	Tcl_Event ev;
+	AsynCAReadRequest *request;
+	Tcl_Interp *interp;
+};
+
+extern "C" int readRequestInvoke(Tcl_Event *p, int flags);
 #endif

@@ -9,14 +9,14 @@ extern "C" { \
 	static int CLASS ## CreateCmd(ClientData cdata, Tcl_Interp *interp, int objc, Tcl_Obj * const objv[]); \
 	static int CLASS ## InstanceCmd(ClientData cdata, Tcl_Interp *interp, int objc, Tcl_Obj * const objv[]); \
 	static void CLASS ## DeleteCmd(ClientData cdata); \
-	static int CLASS ## Link(Tcl_Interp *interp, CLASS *instance); \
+	static Tcl_Obj* CLASS ## AliasCreate(Tcl_Interp *interp, CLASS *instance); \
 }
 
 #define TCLCLASSDECLAREEXPLICIT(CLASS) \
 extern "C" { \
 	static int CLASS ## InstanceCmd(ClientData cdata, Tcl_Interp *interp, int objc, Tcl_Obj * const objv[]); \
 	static void CLASS ## DeleteCmd(ClientData cdata); \
-	static int CLASS ## Link(Tcl_Interp *interp, CLASS *instance); \
+	static Tcl_Obj* CLASS ## AliasCreate(Tcl_Interp *interp, CLASS *instance); \
 }
 
 #define INSTANCECMDENTRY(CLASS, FUN) { #FUN, &CLASS::FUN },
@@ -36,16 +36,16 @@ extern "C" { \
 		/* create instance */\
 		try {\
 			CLASS  *instance = new CLASS(cdata, interp, objc, objv);\
-			if (CLASS ## Link(interp, instance) != TCL_OK) { return TCL_ERROR; } \
-			return TCL_OK;\
-\
+			Tcl_Obj *instName = CLASS ## AliasCreate(interp, instance); \
+			Tcl_SetObjResult(interp, instName); \
+			return TCL_OK; \
 		} catch(int code) {\
 			return code;\
 		}\
 	}\
 
-#define TCLCLASSLINK(CLASS) \
-	static int CLASS ## Link(Tcl_Interp *interp, CLASS *instance) {\
+#define TCLCLASSALIAS(CLASS) \
+	static Tcl_Obj* CLASS ## AliasCreate(Tcl_Interp *interp, CLASS *instance) {\
 		static int counter = 0;\
 \
 \
@@ -54,11 +54,8 @@ extern "C" { \
 		Tcl_Obj* instName=Tcl_ObjPrintf("::AsynCA::" #CLASS "%d", ++counter);\
 		Tcl_Command token = Tcl_CreateObjCommand(interp, Tcl_GetString(instName), CLASS ## InstanceCmd, (ClientData) instance, CLASS ## DeleteCmd);\
 		instance->ThisCmd = token; \
-		Tcl_SetObjResult(interp, instName);\
-		return TCL_OK;\
-\
+		return instName;\
 	}\
-
 
 #define TCLCLASSINSTANCECMD(CLASS, ...) \
 	TCLCLASSSUBCMDS(CLASS, __VA_ARGS__) \
@@ -93,12 +90,12 @@ extern "C" { \
 
 #define TCLCLASSIMPLEMENT(CLASS, ...) \
 	TCLCLASSCREATECMD(CLASS) \
-	TCLCLASSLINK(CLASS) \
+	TCLCLASSALIAS(CLASS) \
 	TCLCLASSINSTANCECMD(CLASS, __VA_ARGS__) \
 	TCLCLASSDELETECMD(CLASS)
 
 #define TCLCLASSIMPLEMENTEXPLICIT(CLASS, ...) \
-	TCLCLASSLINK(CLASS) \
+	TCLCLASSALIAS(CLASS) \
 	TCLCLASSINSTANCECMD(CLASS, __VA_ARGS__) \
 	TCLCLASSDELETECMD(CLASS)
 
