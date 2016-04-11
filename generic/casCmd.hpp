@@ -7,7 +7,7 @@
 #include <epicsTime.h>
 #include <epicsTimer.h>
 #include <smartGDDPointer.h>
-#include <caEventMask.h>
+#include <caeventmask.h>
 #include <fdManager.h>
 #undef INLINE /* conflicting definition from Tcl and EPICS */
 #include <tcl.h>
