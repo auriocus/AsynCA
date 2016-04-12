@@ -482,7 +482,7 @@ caStatus AsynCasPV::read ( const casCtx & ctx, gdd & protoIn )
 	if (asynPV.readCmdPrefix) {
 		Tcl_MutexLock(&CmdMutex);
 		/* construct an asynchronous read object */
-		AsynCAReadRequest *request = new AsynCAReadRequest(asynPV, ctx, protoIn);
+		AsynCAReadRequest *request = new AsynCAReadRequest(asynPV, ctx);
 		/* schedule an event to create the alias in the Tcl thread
 		 * and call the associated callback */
 		ReadRequestEvent *ev = (ReadRequestEvent *) ckalloc(sizeof(ReadRequestEvent)); 
@@ -512,8 +512,8 @@ caStatus AsynCasPV::write ( const casCtx &, const gdd & valueIn )
 }
 
 
-AsynCAReadRequest::AsynCAReadRequest (AsynPV & pv, const casCtx & ctx, gdd & retvalue) :
-	pv (pv), retvalue(retvalue), completed(false)
+AsynCAReadRequest::AsynCAReadRequest (AsynPV & pv, const casCtx & ctx) :
+	pv (pv), completed(false)
 {
 	rawRequest = new casAsyncReadIO(ctx);
 }
@@ -525,7 +525,7 @@ AsynCAReadRequest::~AsynCAReadRequest () {
 		 * e.g. by calling destroy from Tcl. Signal to the EPICS client
 		 * that asynchronous operation has failed */
 
-		rawRequest->postIOCompletion(S_casApp_canceledAsyncIO, *retvalue);
+		rawRequest->postIOCompletion(S_casApp_canceledAsyncIO, *pv.rawPV.data);
 		pv.server.wakeup();
 	}
 }
@@ -537,19 +537,21 @@ int AsynCAReadRequest::return_ (int objc, Tcl_Obj *const objv[]) {
 	if (objc != 3) {
 		Tcl_WrongNumArgs(interp, 2, objv, "value");
 		code = TCL_ERROR;
-		rawRequest->postIOCompletion(S_casApp_canceledAsyncIO, *retvalue);
+		rawRequest->postIOCompletion(S_casApp_canceledAsyncIO, *pv.rawPV.data);
 	} else {
-		code = GetGddFromTclObj(interp, objv[2], *retvalue);
+		code = GetGddFromTclObj(interp, objv[2], *pv.rawPV.data);
 		if (code == TCL_OK) {
 			/* signal successful completion and 
 			 * return value to EPICS client */
-			rawRequest->postIOCompletion(S_cas_success, *retvalue);
+			rawRequest->postIOCompletion(S_cas_success, *pv.rawPV.data);
 		} else {
-			rawRequest->postIOCompletion(S_casApp_canceledAsyncIO, *retvalue);
+			rawRequest->postIOCompletion(S_casApp_canceledAsyncIO, *pv.rawPV.data);
 		}
 	}
 	completed = true;
+	rawRequest = NULL;
 	pv.server.wakeup();
+	delete this;
 	return code;
 }
 

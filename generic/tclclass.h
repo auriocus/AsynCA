@@ -111,7 +111,7 @@ public:
 
 	virtual ~TclClass () {
 
-		printf("Running Destructor from TclClass\n");
+		fprintf(stderr, "Running Destructor from TclClass\n");
 		if (ThisCmd && interp) {
 			/* break destructor loop. Signal DeleteCmd that the object is
 			 * down already by setting ThisCmd to 0*/
@@ -120,7 +120,7 @@ public:
 			Tcl_DeleteCommandFromToken(interp, cmd);
 			interp = NULL;
 		} else {
-			printf("Already dead\n");
+			fprintf(stderr, "Already dead\n");
 		}
 	}
 

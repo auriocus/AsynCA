@@ -560,7 +560,11 @@ bgerr:
 
 static Tcl_Obj * EpicsValue2Tcl(struct event_handler_args args)
 {
-
+	
+	/* Return an empty object if the return value is invalid */
+	if (!args.dbr || args.status != ECA_NORMAL) {
+		return Tcl_NewObj();
+	}
 #ifndef HAVE_VECTCL
 	/* Construct an ordinary Tcl list */
 	switch (args.type) {
@@ -628,14 +632,21 @@ static Tcl_Obj * EpicsMeta2Tcl(struct event_handler_args args) {
 	switch (args.type) {
 #define TIMETYPE(CHTYPE, CTYPE) \
 		case CHTYPE: {\
-			struct CTYPE val = *((struct CTYPE*)args.dbr);\
-			Tcl_DictObjPut(NULL, meta, Tcl_NewStringObj("status", -1), Tcl_NewLongObj(val.status));\
-			Tcl_DictObjPut(NULL, meta, Tcl_NewStringObj("severity", -1), Tcl_NewLongObj(val.severity));\
-			/* convert time stamp into float seconds from Unix epoch */\
-			double ftime = val.stamp.secPastEpoch;\
-			ftime += POSIX_TIME_AT_EPICS_EPOCH;\
-			ftime += val.stamp.nsec*1e-9;\
-			Tcl_DictObjPut(NULL, meta, Tcl_NewStringObj("time", -1), Tcl_NewDoubleObj(ftime));\
+			if (args.dbr && args.status == ECA_NORMAL) { \
+				struct CTYPE val = *((struct CTYPE*)args.dbr);\
+				Tcl_DictObjPut(NULL, meta, Tcl_NewStringObj("status", -1), Tcl_NewLongObj(val.status));\
+				Tcl_DictObjPut(NULL, meta, Tcl_NewStringObj("severity", -1), Tcl_NewLongObj(val.severity));\
+				/* convert time stamp into float seconds from Unix epoch */\
+				double ftime = val.stamp.secPastEpoch;\
+				ftime += POSIX_TIME_AT_EPICS_EPOCH;\
+				ftime += val.stamp.nsec*1e-9;\
+				Tcl_DictObjPut(NULL, meta, Tcl_NewStringObj("time", -1), Tcl_NewDoubleObj(ftime));\
+			} else { \
+				/* no valid data obtained. Put empty objects into the dict */\
+				Tcl_DictObjPut(NULL, meta, Tcl_NewStringObj("status", -1), Tcl_NewObj());\
+				Tcl_DictObjPut(NULL, meta, Tcl_NewStringObj("severity", -1), Tcl_NewObj());\
+				Tcl_DictObjPut(NULL, meta, Tcl_NewStringObj("time", -1), Tcl_NewObj());\
+			} \
 			/* put request status converted into string */\
 \
 			Tcl_DictObjPut(NULL, meta, Tcl_NewStringObj("reqstatus", -1), Tcl_NewLongObj(args.status));\

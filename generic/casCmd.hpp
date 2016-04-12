@@ -230,7 +230,7 @@ int property(Tcl_Interp *interp, int objc, Tcl_Obj * const objv[], CType & prop,
 
 class AsynCAReadRequest : public TclClass {
 public:
-    AsynCAReadRequest (AsynPV &pv, const casCtx & ctx, gdd & retvalue);
+    AsynCAReadRequest (AsynPV &pv, const casCtx & ctx);
 	/* Runs in Tcl thread after construction, to make it complete */
 	void callscript();
     
@@ -239,7 +239,6 @@ public:
 
 	casAsyncReadIO *rawRequest;
     AsynPV & pv;
-    smartGDDPointer retvalue;
 	bool completed;
 };
 
