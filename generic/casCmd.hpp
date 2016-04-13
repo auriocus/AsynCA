@@ -33,6 +33,7 @@ static inline void DecrIfNotNull(Tcl_Obj*& o) {
 }
 
 static int GetGddFromTclObj(Tcl_Interp *interp, Tcl_Obj *value, gdd & storage);
+static Tcl_Obj* NewTclObjFromGdd(const gdd & value);
 
 extern "C" {
 	static Tcl_ThreadCreateProc EpicsEventLoop;
@@ -244,11 +245,37 @@ public:
 
 TCLCLASSDECLAREEXPLICIT(AsynCAReadRequest)
 
+extern "C" int readRequestInvoke(Tcl_Event *p, int flags);
+
 struct ReadRequestEvent {
 	Tcl_Event ev;
 	AsynCAReadRequest *request;
 	Tcl_Interp *interp;
 };
 
-extern "C" int readRequestInvoke(Tcl_Event *p, int flags);
+class AsynCAWriteRequest : public TclClass {
+public:
+    AsynCAWriteRequest (AsynPV &pv, const casCtx & ctx, const gdd & gddvalue);
+	/* Runs in Tcl thread after construction, to make it complete */
+	void callscript();
+    
+	virtual ~AsynCAWriteRequest ();
+	int return_ (int objc, Tcl_Obj *const objv[]);
+	int value (int objc, Tcl_Obj *const objv[]);
+
+	casAsyncWriteIO *rawRequest;
+    AsynPV & pv;
+	bool completed;
+	Tcl_Obj *data;
+};
+
+TCLCLASSDECLAREEXPLICIT(AsynCAWriteRequest)
+
+struct WriteRequestEvent {
+	Tcl_Event ev;
+	AsynCAWriteRequest *request;
+	Tcl_Interp *interp;
+};
+
+extern "C" int writeRequestInvoke(Tcl_Event *p, int flags);
 #endif

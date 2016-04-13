@@ -73,6 +73,44 @@ static int GetGddFromTclObj(Tcl_Interp *interp, Tcl_Obj *value, gdd & storage) {
 	return TCL_OK;
 }
 
+/* Convert the gdd object into an equivalent Tcl object */
+static Tcl_Obj* NewTclObjFromGdd(const gdd & value) {
+	if (value.dimension() != 0) {
+		return	Tcl_ObjPrintf("Unimplemented vector data with %d items, must be 1", value.dimension());
+	}
+
+	switch (value.primitiveType()) {
+		/* floating point types */
+		case aitEnumFloat64:
+		case aitEnumFloat32: {
+			aitFloat64 val;
+			value.getConvert(val);
+			return Tcl_NewDoubleObj(val);
+		}
+		/* integer types, all are simply converted to Tcl_WideInt*/
+		case aitEnumInt8:
+		case aitEnumUint8:
+		case aitEnumInt16:
+		case aitEnumUint16:
+		case aitEnumInt32:
+		{
+			aitInt32 val;
+			value.getConvert(val);
+			return Tcl_NewWideIntObj(val);
+		}
+		case aitEnumUint32: {
+			aitUint32 val;
+			value.getConvert(val);
+			return Tcl_NewWideIntObj(val);
+		}
+		default: {
+			return Tcl_ObjPrintf("Unimplemented data type %d items", value.primitiveType());
+		}
+
+	}
+}
+
+
 PipeObject::PipeObject() {
 	int fd[2];
 	if (pipe(fd)==-1) {
@@ -501,14 +539,34 @@ caStatus AsynCasPV::read ( const casCtx & ctx, gdd & protoIn )
 	}
 }
 
-caStatus AsynCasPV::write ( const casCtx &, const gdd & valueIn ) 
-{
-	/* Move data to internal storage
-	 * Typechecks and conversions are performed in the server library */
-	data->put(&valueIn);
-	/* a write does not inform other clients. Post event */
-	asynPV.postUpdateEvent();
-	return S_casApp_success;
+caStatus AsynCasPV::write ( const casCtx &ctx, const gdd & valueIn ) 
+{	
+	/* check if this needs to be completed asynchronously */
+	if (asynPV.writeCmdPrefix) {
+		Tcl_MutexLock(&CmdMutex);
+		/* construct an asynchronous read object */
+		AsynCAWriteRequest *request = new AsynCAWriteRequest(asynPV, ctx, valueIn);
+		/* schedule an event to create the alias in the Tcl thread
+		 * and call the associated callback */
+		WriteRequestEvent *ev = (WriteRequestEvent *) ckalloc(sizeof(WriteRequestEvent)); 
+		// event must be alloc'ed from Tcl
+		ev->ev.proc=writeRequestInvoke;
+		ev->request = request;
+		ev->interp = asynPV.interp;
+		Tcl_ThreadQueueEvent(asynPV.server.mainid, (Tcl_Event*)ev, TCL_QUEUE_TAIL);
+		Tcl_ThreadAlert(asynPV.server.mainid);
+
+		Tcl_MutexUnlock(&CmdMutex);
+		return S_casApp_asyncCompletion;	
+	} else {
+		/* Synchronous operation 
+		* Move data to internal storage
+		 * Typechecks and conversions are performed in the server library */
+		data->put(&valueIn);
+		/* a write does not inform other clients. Post event */
+		asynPV.postUpdateEvent();
+		return S_casApp_success;
+	}
 }
 
 
@@ -556,7 +614,7 @@ int AsynCAReadRequest::return_ (int objc, Tcl_Obj *const objv[]) {
 }
 
 static void bgcallscript(Tcl_Interp *interp, Tcl_Obj *cmd, Tcl_Obj *instName) {
-	/* Runs in Tcl thread after construction, to make it complete */
+	/* Execute the Tcl callback from the Tcl event loop */
 
 	Tcl_Obj *script = Tcl_DuplicateObj(cmd);
 	Tcl_IncrRefCount(script);
@@ -594,6 +652,64 @@ int readRequestInvoke(Tcl_Event *p, int flags) {
 	Tcl_Obj *instName = AsynCAReadRequestAliasCreate(ev->interp, request);
 
 	bgcallscript(ev->interp, request->pv.readCmdPrefix, instName);
+	return 1;
+}
+
+/* Write Request */
+AsynCAWriteRequest::AsynCAWriteRequest (AsynPV & pv, const casCtx & ctx, const gdd & gddvalue) :
+	pv (pv), completed(false), data (NewTclObjFromGdd(gddvalue))
+{
+	rawRequest = new casAsyncWriteIO(ctx);
+	Tcl_IncrRefCount(data);
+}
+
+
+AsynCAWriteRequest::~AsynCAWriteRequest () {
+	if (!completed) {
+		/* somehow we were destroyed without a returning cleanly
+		 * e.g. by calling destroy from Tcl. Signal to the EPICS client
+		 * that asynchronous operation has failed */
+
+		rawRequest->postIOCompletion(S_casApp_canceledAsyncIO);
+		pv.server.wakeup();
+	}
+	Tcl_DecrRefCount(data);
+}
+
+int AsynCAWriteRequest::value (int objc, Tcl_Obj *const objv[])
+{
+	Tcl_SetObjResult(interp, data);
+	return TCL_OK;
+}
+
+
+TCLCLASSIMPLEMENTEXPLICIT(AsynCAWriteRequest, value, return_);
+
+int AsynCAWriteRequest::return_ (int objc, Tcl_Obj *const objv[]) {
+	int code; 
+	if (objc != 2) {
+		Tcl_WrongNumArgs(interp, 2, objv, "");
+		code = TCL_ERROR;
+		rawRequest->postIOCompletion(S_casApp_canceledAsyncIO);
+	} else {
+		/* signal successful completion  */
+		rawRequest->postIOCompletion(S_cas_success);
+		code=TCL_OK;
+	}
+	completed = true;
+	rawRequest = NULL;
+	pv.server.wakeup();
+	delete this;
+	return code;
+}
+
+int writeRequestInvoke(Tcl_Event *p, int flags) {
+	/* the event handler run from Tcl */
+	WriteRequestEvent *ev = reinterpret_cast<WriteRequestEvent *>(p);
+	AsynCAWriteRequest *request = ev->request;
+	Tcl_Obj *instName = AsynCAWriteRequestAliasCreate(ev->interp, request);
+
+	bgcallscript(ev->interp, request->pv.writeCmdPrefix, instName);
 	return 1;
 }
 
