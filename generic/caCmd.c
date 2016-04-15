@@ -34,7 +34,7 @@ static int newpvInfo (Tcl_Interp *interp, const char *name, Tcl_Obj *prefix, pvI
 	
 	result->interp=interp;
 	result->name=ckstrdup(name);
-	Tcl_IncrRefCount(prefix);
+	if (prefix) Tcl_IncrRefCount(prefix);
 	result->connectprefix = prefix;
 	result->id = 0;
 	result->connected = 0;
@@ -87,14 +87,17 @@ static int PVeventDeleteProc(Tcl_Event *e, ClientData cdata) {
 static void stateHandler (struct connection_handler_args chargs) {
 	/* callback */
 	pvInfo *info = ca_puser(chargs.chid);
-	/* queue event to handle the Tcl callback */
-	connectionEvent * cev = ckalloc(sizeof(connectionEvent));
-	
-	cev->ev.proc = stateHandlerInvoke;
-	cev->info = info;
-	cev->op = chargs.op;
-	Tcl_ThreadQueueEvent(info->thrid, (Tcl_Event*)cev, TCL_QUEUE_TAIL);
-	Tcl_ThreadAlert(info->thrid);
+
+	if (info->connectprefix) {
+		/* queue event to handle the Tcl callback */
+		connectionEvent * cev = ckalloc(sizeof(connectionEvent));
+		
+		cev->ev.proc = stateHandlerInvoke;
+		cev->info = info;
+		cev->op = chargs.op;
+		Tcl_ThreadQueueEvent(info->thrid, (Tcl_Event*)cev, TCL_QUEUE_TAIL);
+		Tcl_ThreadAlert(info->thrid);
+	}
 }
 
 static int stateHandlerInvoke(Tcl_Event* p, int flags) {

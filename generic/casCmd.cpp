@@ -178,6 +178,29 @@ AsynServer::~AsynServer() {
 	printf("AsynServer dying!\n"); 
 }
 
+
+struct gddTypeItem {
+	const char *typestring;
+	aitEnum gddtype;
+};
+
+static gddTypeItem gddTypeTable[] = {
+	{"double", aitEnumFloat64},
+	{"float64", aitEnumFloat64},
+	{"float", aitEnumFloat32},
+	{"float32", aitEnumFloat32},
+	{"int8", aitEnumInt8},
+	{"uint8", aitEnumUint8},
+	{"int16", aitEnumInt16},
+	{"uint16", aitEnumUint16},
+	{"int32", aitEnumInt32},
+	{"uint32", aitEnumUint32},
+	{"enum", aitEnumEnum16},
+	{"string", aitEnumFixedString},
+	{nullptr, aitEnumInvalid},
+};
+
+
 int AsynServer::createPV(int objc, Tcl_Obj * const objv[]) {
 	/* create a scalar double PV - TODO support all data types */
 	if (objc < 3 || objc > 5) {
@@ -193,14 +216,14 @@ int AsynServer::createPV(int objc, Tcl_Obj * const objv[]) {
 
 
 	aitEnum type = aitEnumFloat64;
-	if (objc == 4) {
-		/* if (Tcl_GetIndexFromObjStruct(interp, objv[3], \
-			DataTypeTable, sizeof(DataTypeEntry), \
-			"EPICS data type", 0, &index) != TCL_OK) */
-		if (std::string(Tcl_GetString(objv[3])) != "double") {
-			Tcl_SetObjResult(interp, Tcl_ObjPrintf("Wrong data type %s, only double implemented", Tcl_GetString(objv[3])));
+	if (objc >= 4) {
+		int typeindex;
+		if (Tcl_GetIndexFromObjStruct(interp, objv[3],
+			gddTypeTable, sizeof(gddTypeItem), "EPICS data type", 0, &typeindex) != TCL_OK) {
 			return TCL_ERROR;
 		}
+		type = gddTypeTable[typeindex].gddtype;
+		printf("Data type: %d\n", type);
 	}
 	
 	int count = 1;
@@ -405,7 +428,7 @@ AsynCasPV::AsynCasPV(AsynPV &asynPV, std::string PVname, aitEnum type, unsigned 
 	lowlimit(0.0), highlimit(10.0), precision(6), units("mm") 
 {
 	data = new gddScalar(gddAppType_value, type);
-	data->put(3.14159);
+	/*data->put(3.14159);*/
 }
 
 
