@@ -55,19 +55,66 @@ static int GetGddFromTclObj(Tcl_Interp *interp, Tcl_Obj *value, gdd & storage) {
 		return TCL_ERROR;
 	}
 
-	if (storage.primitiveType() != aitEnumFloat64) {
-		if (interp)
-			Tcl_SetObjResult(interp, Tcl_ObjPrintf("Unimplemented data type %d, must be %d (double)", storage.primitiveType(), aitEnumFloat64));
-		return TCL_ERROR;
+	switch (storage.primitiveType()) {
+		case aitEnumFloat64:
+		case aitEnumFloat32: {
+			double d;
+			if (Tcl_GetDoubleFromObj(interp, value, &d) != TCL_OK) {
+				return TCL_ERROR;
+			}
+			/* finally put it and update the time stamp */
+			storage.putConvert(d);
+			
+			break;
+		}
+		
+		#define INTVALCONV(AITENUM, AITYPE) \
+			case AITENUM: { \
+							 Tcl_WideInt val;\
+							 if (Tcl_GetWideIntFromObj(interp, value, &val) != TCL_OK) {\
+								 return TCL_ERROR;\
+							 }\
+							 AITYPE tval = val;\
+							 \
+							 if (tval != val) {\
+								 /* value doesn't fit */\
+								 Tcl_SetObjResult(interp, Tcl_NewStringObj("Value outside range for type " STRINGIFY(AITYPE), -1));\
+								 return TCL_ERROR;\
+							 }\
+							 storage.put(tval); \
+							 break; \
+						 }
+
+		INTVALCONV(aitEnumUint8, aitUint8)
+		INTVALCONV(aitEnumInt8, aitInt8)
+		INTVALCONV(aitEnumUint16, aitUint16)
+		INTVALCONV(aitEnumInt16, aitInt16)
+		INTVALCONV(aitEnumUint32, aitUint32)
+		INTVALCONV(aitEnumInt32, aitInt32)
+		INTVALCONV(aitEnumEnum16, aitEnum16)
+		
+#undef INTVALCONV
+		case aitEnumFixedString: {
+			int len;
+			const char *bytes = Tcl_GetStringFromObj(value, &len);
+			const int maxlen = sizeof(aitFixedString);
+			if (len > maxlen) {
+				Tcl_SetObjResult(interp, Tcl_ObjPrintf("String too long (%d bytes), max %d bytes allowed", len, maxlen));
+				return TCL_ERROR;
+			}
+			
+			
+			storage.putConvert(bytes);
+			break;
+		}
+
+		default: {
+			if (interp)
+				Tcl_SetObjResult(interp, Tcl_ObjPrintf("Unimplemented data type %d", storage.primitiveType()));
+			return TCL_ERROR;
+		}
 	}
 
-	double d;
-	if (Tcl_GetDoubleFromObj(interp, value, &d) != TCL_OK) {
-		return TCL_ERROR;
-	}
-	/* finally put it and update the time stamp */
-	storage.put(d);
-	
 	aitTimeStamp gddts(epicsTime::getCurrent());
 	storage.setTimeStamp(&gddts);
 	return TCL_OK;
