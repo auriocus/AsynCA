@@ -229,18 +229,33 @@ int property(Tcl_Interp *interp, int objc, Tcl_Obj * const objv[], CType & prop,
 	return code;
 }
 
+class AsynCAReadRequest;
+
+class AsynCARawReadRequest : public casAsyncReadIO {
+public:
+	AsynCARawReadRequest(AsynCAReadRequest &boxedrequest, const casCtx & ctx);
+	~AsynCARawReadRequest();
+	
+	AsynCAReadRequest & boxedrequest;
+	bool completed;
+};
+
+
 class AsynCAReadRequest : public TclClass {
 public:
-    AsynCAReadRequest (AsynPV &pv, const casCtx & ctx);
+    AsynCAReadRequest (AsynPV &pv, const casCtx & ctx, gdd & protoIn);
 	/* Runs in Tcl thread after construction, to make it complete */
 	void callscript();
     
 	virtual ~AsynCAReadRequest ();
 	int return_ (int objc, Tcl_Obj *const objv[]);
 
-	casAsyncReadIO *rawRequest;
+	void droppedrequest();
+	
+	AsynCARawReadRequest *rawRequest;
     AsynPV & pv;
 	bool completed;
+	smartGDDPointer proto;
 };
 
 TCLCLASSDECLAREEXPLICIT(AsynCAReadRequest)
@@ -253,6 +268,18 @@ struct ReadRequestEvent {
 	Tcl_Interp *interp;
 };
 
+class AsynCAWriteRequest;
+
+class AsynCARawWriteRequest : public casAsyncWriteIO {
+public:
+	AsynCARawWriteRequest(AsynCAWriteRequest &boxedrequest, const casCtx & ctx);
+	~AsynCARawWriteRequest();
+	
+	AsynCAWriteRequest & boxedrequest;
+	bool completed;
+};
+
+
 class AsynCAWriteRequest : public TclClass {
 public:
     AsynCAWriteRequest (AsynPV &pv, const casCtx & ctx, const gdd & gddvalue);
@@ -262,8 +289,10 @@ public:
 	virtual ~AsynCAWriteRequest ();
 	int return_ (int objc, Tcl_Obj *const objv[]);
 	int value (int objc, Tcl_Obj *const objv[]);
+	
+	void droppedrequest();
 
-	casAsyncWriteIO *rawRequest;
+	AsynCARawWriteRequest *rawRequest;
     AsynPV & pv;
 	bool completed;
 	Tcl_Obj *data;

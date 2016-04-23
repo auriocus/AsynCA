@@ -590,7 +590,7 @@ caStatus AsynCasPV::read ( const casCtx & ctx, gdd & protoIn )
 	if (asynPV.readCmdPrefix) {
 		Tcl_MutexLock(&CmdMutex);
 		/* construct an asynchronous read object */
-		AsynCAReadRequest *request = new AsynCAReadRequest(asynPV, ctx);
+		AsynCAReadRequest *request = new AsynCAReadRequest(asynPV, ctx, protoIn);
 		/* schedule an event to create the alias in the Tcl thread
 		 * and call the associated callback */
 		ReadRequestEvent *ev = (ReadRequestEvent *) ckalloc(sizeof(ReadRequestEvent)); 
@@ -639,11 +639,24 @@ caStatus AsynCasPV::write ( const casCtx &ctx, const gdd & valueIn )
 	}
 }
 
+AsynCARawReadRequest::AsynCARawReadRequest(AsynCAReadRequest &boxedrequest, const casCtx & ctx) :
+	casAsyncReadIO(ctx), boxedrequest(boxedrequest), completed(false) 
+{	}
 
-AsynCAReadRequest::AsynCAReadRequest (AsynPV & pv, const casCtx & ctx) :
-	pv (pv), completed(false)
+
+AsynCARawReadRequest::~AsynCARawReadRequest() {
+	if (!completed) {
+		/* Huhu. The client has killed the connection. We need to signal the corresponding Tcl object
+		 * that it's gone */
+		boxedrequest.droppedrequest();
+	}
+}
+
+
+AsynCAReadRequest::AsynCAReadRequest (AsynPV & pv, const casCtx & ctx, gdd & protoIn) :
+	pv (pv), completed(false), proto(protoIn)
 {
-	rawRequest = new casAsyncReadIO(ctx);
+	rawRequest = new AsynCARawReadRequest(*this, ctx);
 }
 
 
@@ -661,26 +674,40 @@ AsynCAReadRequest::~AsynCAReadRequest () {
 TCLCLASSIMPLEMENTEXPLICIT(AsynCAReadRequest, return_);
 
 int AsynCAReadRequest::return_ (int objc, Tcl_Obj *const objv[]) {
-	int code; 
-	if (objc != 3) {
-		Tcl_WrongNumArgs(interp, 2, objv, "value");
-		code = TCL_ERROR;
-		rawRequest->postIOCompletion(S_casApp_canceledAsyncIO, *pv.rawPV.data);
-	} else {
-		code = GetGddFromTclObj(interp, objv[2], *pv.rawPV.data);
-		if (code == TCL_OK) {
-			/* signal successful completion and 
-			 * return value to EPICS client */
-			rawRequest->postIOCompletion(S_cas_success, *pv.rawPV.data);
-		} else {
+	int code;
+	if (!completed) {
+		if (objc != 3) {
+			Tcl_WrongNumArgs(interp, 2, objv, "value");
+			code = TCL_ERROR;
 			rawRequest->postIOCompletion(S_casApp_canceledAsyncIO, *pv.rawPV.data);
+		} else {
+			code = GetGddFromTclObj(interp, objv[2], *pv.rawPV.data);
+			if (code == TCL_OK) {
+				/* signal successful completion and 
+				 * return value to EPICS client */
+				pv.rawPV.ft.read(pv.rawPV, *proto);
+				rawRequest->postIOCompletion(S_cas_success, *proto);
+			} else {
+				rawRequest->postIOCompletion(S_casApp_canceledAsyncIO, *pv.rawPV.data);
+			}
 		}
+		rawRequest->completed=true;
+		completed = true;
+		rawRequest = NULL;
+		pv.server.wakeup();
+	} else {
+		/* return was called, despite the original request not existent. 
+		 * Probably the client dropped the connection */
+		Tcl_SetObjResult(interp, Tcl_NewStringObj("Request cancelled by client", -1));
+		code = TCL_OK;
 	}
-	completed = true;
-	rawRequest = NULL;
-	pv.server.wakeup();
 	delete this;
 	return code;
+}
+
+void AsynCAReadRequest::droppedrequest() {
+	completed = true;
+	rawRequest = NULL;
 }
 
 static void bgcallscript(Tcl_Interp *interp, Tcl_Obj *cmd, Tcl_Obj *instName) {
@@ -726,10 +753,26 @@ int readRequestInvoke(Tcl_Event *p, int flags) {
 }
 
 /* Write Request */
+AsynCARawWriteRequest::AsynCARawWriteRequest(AsynCAWriteRequest &boxedrequest, const casCtx & ctx) :
+	casAsyncWriteIO(ctx), boxedrequest(boxedrequest), completed(false) 
+{	}
+
+
+AsynCARawWriteRequest::~AsynCARawWriteRequest() {
+	if (!completed) {
+		/* Huhu. The client has killed the connection. We need to signal the corresponding Tcl object
+		 * that it's gone */
+		boxedrequest.droppedrequest();
+	}
+}
+
+
+TCLCLASSIMPLEMENTEXPLICIT(AsynCAWriteRequest, value, return_);
+
 AsynCAWriteRequest::AsynCAWriteRequest (AsynPV & pv, const casCtx & ctx, const gdd & gddvalue) :
 	pv (pv), completed(false), data (NewTclObjFromGdd(gddvalue))
 {
-	rawRequest = new casAsyncWriteIO(ctx);
+	rawRequest = new AsynCARawWriteRequest(*this, ctx);
 	Tcl_IncrRefCount(data);
 }
 
@@ -752,25 +795,35 @@ int AsynCAWriteRequest::value (int objc, Tcl_Obj *const objv[])
 	return TCL_OK;
 }
 
-
-TCLCLASSIMPLEMENTEXPLICIT(AsynCAWriteRequest, value, return_);
-
 int AsynCAWriteRequest::return_ (int objc, Tcl_Obj *const objv[]) {
-	int code; 
-	if (objc != 2) {
-		Tcl_WrongNumArgs(interp, 2, objv, "");
-		code = TCL_ERROR;
-		rawRequest->postIOCompletion(S_casApp_canceledAsyncIO);
+	int code;
+	if (!completed) {
+		if (objc != 2) {
+			Tcl_WrongNumArgs(interp, 2, objv, "");
+			code = TCL_ERROR;
+			rawRequest->postIOCompletion(S_casApp_canceledAsyncIO);
+		} else {
+			/* signal successful completion  */
+			rawRequest->postIOCompletion(S_cas_success);
+			code=TCL_OK;
+		}
+		rawRequest -> completed = true;
+		completed = true;
+		rawRequest = NULL;
+		pv.server.wakeup();
 	} else {
-		/* signal successful completion  */
-		rawRequest->postIOCompletion(S_cas_success);
-		code=TCL_OK;
+		/* return was called, despite the original request not existent. 
+		 * Probably the client dropped the connection */
+		Tcl_SetObjResult(interp, Tcl_NewStringObj("Request cancelled by client", -1));
+		code = TCL_OK;
 	}
-	completed = true;
-	rawRequest = NULL;
-	pv.server.wakeup();
 	delete this;
 	return code;
+}
+
+void AsynCAWriteRequest::droppedrequest() {
+	completed = true;
+	rawRequest = NULL;
 }
 
 int writeRequestInvoke(Tcl_Event *p, int flags) {
