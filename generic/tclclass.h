@@ -19,7 +19,7 @@ extern "C" { \
 	static Tcl_Obj* CLASS ## AliasCreate(Tcl_Interp *interp, CLASS *instance); \
 }
 
-#define INSTANCECMDENTRY(CLASS, FUN) { #FUN, &CLASS::FUN },
+#define INSTANCECMDENTRY(CLASS, FUN) { #FUN, &CLASS::FUN ## _},
 
 #define TCLCLASSSUBCMDS(CLASS, ...) \
 	static struct CLASS ## SubCmdEntry { \
@@ -27,7 +27,7 @@ extern "C" { \
 		int (CLASS::*fun) (int, Tcl_Obj *const[]); \
 	} CLASS ## SubCmdTable [] = { \
 		MAPARG(INSTANCECMDENTRY, CLASS, __VA_ARGS__) \
-		{ "destroy", &CLASS::destroy }, \
+		{ "destroy", &CLASS::destroyCmd }, \
 		{ NULL, NULL } \
 	};
 
@@ -124,7 +124,7 @@ public:
 		}
 	}
 
-	int destroy(int objc, Tcl_Obj * const objv[]) {
+	int destroyCmd(int objc, Tcl_Obj * const objv[]) {
 		delete this;
 		return TCL_OK;
 	}
