@@ -9,6 +9,8 @@
 #include <smartGDDPointer.h>
 #include <caeventmask.h>
 #include <fdManager.h>
+#include <db_access.h>
+
 #undef INLINE /* conflicting definition from Tcl and EPICS */
 #include <tcl.h>
 #include "casExport.h"
@@ -17,6 +19,8 @@
 
 #include <unordered_map>
 #include <string>
+#include <vector>
+
 
 
 /* utility to convert a std::string into a new Tcl_Obj */
@@ -32,7 +36,7 @@ static inline void DecrIfNotNull(Tcl_Obj*& o) {
 	}
 }
 
-static int GetGddFromTclObj(Tcl_Interp *interp, Tcl_Obj *value, gdd & storage);
+//static int GetGddFromTclObj(Tcl_Interp *interp, Tcl_Obj *value, gdd & storage);
 static Tcl_Obj* NewTclObjFromGdd(const gdd & value);
 
 extern "C" {
@@ -68,9 +72,9 @@ public:
     ~AsynServer();
 
 	// Tcl interface functions
-	int createPV(int objc, Tcl_Obj * const objv[]);
-	int findPV(int objc, Tcl_Obj * const objv[]);
-	int listPV(int objc, Tcl_Obj * const objv[]);
+	int createPV_(int objc, Tcl_Obj * const objv[]);
+	int findPV_(int objc, Tcl_Obj * const objv[]);
+	int listPV_(int objc, Tcl_Obj * const objv[]);
 	
 	// Notifier from PV, if it is destroyed by Tcl
 	void removePV(std::string name);
@@ -106,6 +110,9 @@ public:
 	unsigned int precision;
 	std::string units;
 	
+	std::vector<std::string> enumstrings;
+	std::unordered_map<std::string, aitEnum16> enummap;
+	
 	/* the data store - should be a gdd polymorphic type in the end */
     smartGDDPointer data;
 	
@@ -136,7 +143,9 @@ public:
     static gddAppFuncTable<AsynCasPV> ft;
     static bool hasBeenInitialized;
 	static void initFT();
- 
+
+	int putTclObj(Tcl_Interp *interp, Tcl_Obj *value);
+	
 };
 
 
@@ -147,16 +156,18 @@ public:
     ~AsynPV();
 	
 	/* write and read from perspective of the server */
-	int write(int objc, Tcl_Obj * const objv[]);
-	int read(int objc, Tcl_Obj * const objv[]);
-	int name(int objc, Tcl_Obj * const objv[]);
+	int write_(int objc, Tcl_Obj * const objv[]);
+	int read_(int objc, Tcl_Obj * const objv[]);
+	int readenum_(int objc, Tcl_Obj * const objv[]);
+	int enumstrings_(int objc, Tcl_Obj * const objv[]);
+	int name_(int objc, Tcl_Obj * const objv[]);
 	
-	int readcommand(int objc, Tcl_Obj * const objv[]);
-	int writecommand(int objc, Tcl_Obj * const objv[]);
-	int lowlimit(int objc, Tcl_Obj * const objv[]);
-	int highlimit(int objc, Tcl_Obj * const objv[]);
-	int precision(int objc, Tcl_Obj * const objv[]);
-	int units(int objc, Tcl_Obj * const objv[]);
+	int readcommand_(int objc, Tcl_Obj * const objv[]);
+	int writecommand_(int objc, Tcl_Obj * const objv[]);
+	int lowlimit_(int objc, Tcl_Obj * const objv[]);
+	int highlimit_(int objc, Tcl_Obj * const objv[]);
+	int precision_(int objc, Tcl_Obj * const objv[]);
+	int units_(int objc, Tcl_Obj * const objv[]);
 
 	int commandfun(int objc, Tcl_Obj * const objv[], Tcl_Obj* &prefix);
 	
@@ -176,11 +187,12 @@ TCLCLASSDECLAREEXPLICIT(AsynPV)
 
 TCL_DECLARE_MUTEX(CmdMutex);
 
-template <typename CType> Tcl_Obj* NewTclObj(CType value);
-
-template <> Tcl_Obj* NewTclObj(double value) { return Tcl_NewDoubleObj(value); }
-template <> Tcl_Obj* NewTclObj(unsigned int value) { return Tcl_NewWideIntObj(value); }
-template <> Tcl_Obj* NewTclObj(std::string value) { return Tcl_NewStringObj(value.c_str(), -1); }
+inline Tcl_Obj* NewTclObj(double value) { return Tcl_NewDoubleObj(value); }
+inline Tcl_Obj* NewTclObj(int value) { return Tcl_NewWideIntObj(value); }
+inline Tcl_Obj* NewTclObj(unsigned int value) { return Tcl_NewWideIntObj(value); }
+inline Tcl_Obj* NewTclObj(long value) { return Tcl_NewWideIntObj(value); }
+inline Tcl_Obj* NewTclObj(unsigned long value) { return Tcl_NewWideIntObj(value); }
+inline Tcl_Obj* NewTclObj(const std::string &value) { return Tcl_NewStringObj(value.c_str(), value.size()); }
 
 
 template <typename CType> int FromTclObj(Tcl_Interp * interp, Tcl_Obj* value, CType &out);
@@ -215,7 +227,7 @@ int property(Tcl_Interp *interp, int objc, Tcl_Obj * const objv[], CType & prop,
 	
 	/* get value  */
 	if (objc == 2) {
-		Tcl_SetObjResult(interp, NewTclObj<CType>(prop));
+		Tcl_SetObjResult(interp, NewTclObj(prop));
 
 		Tcl_MutexUnlock(&CmdMutex);
 		return TCL_OK;
@@ -288,7 +300,7 @@ public:
     
 	virtual ~AsynCAWriteRequest ();
 	int return_ (int objc, Tcl_Obj *const objv[]);
-	int value (int objc, Tcl_Obj *const objv[]);
+	int value_ (int objc, Tcl_Obj *const objv[]);
 	
 	void droppedrequest();
 

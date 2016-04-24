@@ -1,5 +1,5 @@
 /*
- * caCmd.c --
+ * casCmd.cpp --
  */
 
 #include "casCmd.hpp"
@@ -45,81 +45,6 @@ static Tcl_ThreadCreateType EpicsEventLoop (ClientData clientData)
 	TCL_THREAD_CREATE_RETURN;
 }
 
-static int GetGddFromTclObj(Tcl_Interp *interp, Tcl_Obj *value, gdd & storage) {
-	/* Try to convert the Tcl_Obj into the data type of the gdd.
-	 * Return a Tcl success code */
-	
-	if (storage.dimension() != 0) {
-		if (interp)
-			Tcl_SetObjResult(interp, Tcl_ObjPrintf("Unimplemented vector put for %d items, must be 1", storage.dimension()));
-		return TCL_ERROR;
-	}
-
-	switch (storage.primitiveType()) {
-		case aitEnumFloat64:
-		case aitEnumFloat32: {
-			double d;
-			if (Tcl_GetDoubleFromObj(interp, value, &d) != TCL_OK) {
-				return TCL_ERROR;
-			}
-			/* finally put it and update the time stamp */
-			storage.putConvert(d);
-			
-			break;
-		}
-		
-		#define INTVALCONV(AITENUM, AITYPE) \
-			case AITENUM: { \
-							 Tcl_WideInt val;\
-							 if (Tcl_GetWideIntFromObj(interp, value, &val) != TCL_OK) {\
-								 return TCL_ERROR;\
-							 }\
-							 AITYPE tval = val;\
-							 \
-							 if (tval != val) {\
-								 /* value doesn't fit */\
-								 Tcl_SetObjResult(interp, Tcl_NewStringObj("Value outside range for type " STRINGIFY(AITYPE), -1));\
-								 return TCL_ERROR;\
-							 }\
-							 storage.put(tval); \
-							 break; \
-						 }
-
-		INTVALCONV(aitEnumUint8, aitUint8)
-		INTVALCONV(aitEnumInt8, aitInt8)
-		INTVALCONV(aitEnumUint16, aitUint16)
-		INTVALCONV(aitEnumInt16, aitInt16)
-		INTVALCONV(aitEnumUint32, aitUint32)
-		INTVALCONV(aitEnumInt32, aitInt32)
-		INTVALCONV(aitEnumEnum16, aitEnum16)
-		
-#undef INTVALCONV
-		case aitEnumFixedString: {
-			int len;
-			const char *bytes = Tcl_GetStringFromObj(value, &len);
-			const int maxlen = sizeof(aitFixedString);
-			if (len > maxlen) {
-				Tcl_SetObjResult(interp, Tcl_ObjPrintf("String too long (%d bytes), max %d bytes allowed", len, maxlen));
-				return TCL_ERROR;
-			}
-			
-			
-			storage.putConvert(bytes);
-			break;
-		}
-
-		default: {
-			if (interp)
-				Tcl_SetObjResult(interp, Tcl_ObjPrintf("Unimplemented data type %d", storage.primitiveType()));
-			return TCL_ERROR;
-		}
-	}
-
-	aitTimeStamp gddts(epicsTime::getCurrent());
-	storage.setTimeStamp(&gddts);
-	return TCL_OK;
-}
-
 /* Convert the gdd object into an equivalent Tcl object */
 static Tcl_Obj* NewTclObjFromGdd(const gdd & value) {
 	if (value.dimension() != 0) {
@@ -135,6 +60,7 @@ static Tcl_Obj* NewTclObjFromGdd(const gdd & value) {
 			return Tcl_NewDoubleObj(val);
 		}
 		/* integer types, all are simply converted to Tcl_WideInt*/
+		case aitEnumEnum16:
 		case aitEnumInt8:
 		case aitEnumUint8:
 		case aitEnumInt16:
@@ -181,7 +107,7 @@ wakeupEpicsLoopFD::wakeupEpicsLoopFD() :
 
 void wakeupEpicsLoopFD::callBack() {
 	char msg;
-	int bytesread = read(readfd, &msg, 1);
+	read(readfd, &msg, 1);
 	//printf("Loop woken up: %c\n", msg);
 }
 
@@ -248,7 +174,7 @@ static gddTypeItem gddTypeTable[] = {
 };
 
 
-int AsynServer::createPV(int objc, Tcl_Obj * const objv[]) {
+int AsynServer::createPV_(int objc, Tcl_Obj * const objv[]) {
 	/* create a scalar double PV - TODO support all data types */
 	if (objc < 3 || objc > 5) {
 		Tcl_WrongNumArgs(interp, 1, objv, "name ?type ?count??");
@@ -291,7 +217,7 @@ int AsynServer::createPV(int objc, Tcl_Obj * const objv[]) {
 	return TCL_OK;
 }
 
-int AsynServer::findPV(int objc, Tcl_Obj * const objv[]) {
+int AsynServer::findPV_(int objc, Tcl_Obj * const objv[]) {
 	if (objc != 2) {
 		Tcl_WrongNumArgs(interp, 1, objv, "name");
 		return TCL_ERROR;
@@ -304,7 +230,7 @@ int AsynServer::findPV(int objc, Tcl_Obj * const objv[]) {
 	return TCL_OK;
 }
 
-int AsynServer::listPV(int objc, Tcl_Obj * const objv[]) {
+int AsynServer::listPV_(int objc, Tcl_Obj * const objv[]) {
 	/* return all PVs as Tcl objects */
 	Tcl_Obj *result = Tcl_NewObj();
 	for (auto& p: PVs) {
@@ -354,7 +280,7 @@ void  AsynServer::wakeup() {
 	alertfd->send();
 }
 
-TCLCLASSIMPLEMENTEXPLICIT(AsynPV, name, read, write, readcommand, writecommand, lowlimit, highlimit, precision, units);
+TCLCLASSIMPLEMENTEXPLICIT(AsynPV, name, read, write, readenum, enumstrings, readcommand, writecommand, lowlimit, highlimit, precision, units);
 
 AsynPV::AsynPV(AsynServer &server, std::string name, aitEnum type, unsigned int count) : 
 	server(server), rawPV(*this, name, type, count),
@@ -367,26 +293,117 @@ AsynPV::~AsynPV() {
 	server.removePV(rawPV.PVname);
 }
 
-int AsynPV::read(int objc, Tcl_Obj * const objv[]) {
-	aitFloat64 val;
-	rawPV.data->getConvert(val);
-	Tcl_SetObjResult(interp, Tcl_NewDoubleObj(val));
+int AsynPV::read_(int objc, Tcl_Obj * const objv[]) {
+	Tcl_SetObjResult(interp, NewTclObjFromGdd(*rawPV.data));
 	return TCL_OK;
 }
 
-int AsynPV::write(int objc, Tcl_Obj * const objv[]) {
+int AsynPV::write_(int objc, Tcl_Obj * const objv[]) {
 	if (objc != 3) {
 		Tcl_WrongNumArgs(interp, 2, objv, "value");
 		return TCL_ERROR;
 	}
 	
-	if (GetGddFromTclObj(interp, objv[2], *rawPV.data) != TCL_OK) {
-		return TCL_ERROR;
-	}
+	Tcl_Obj *value = objv[2];
 
+	if (rawPV.putTclObj(interp, value) != TCL_OK) {
+			return TCL_ERROR;
+	}
+	
 	/* postEvent, needed for camonitor */
 	postUpdateEvent();
 	return TCL_OK;
+}
+
+int AsynPV::readenum_(int objc, Tcl_Obj * const objv[]) {
+	if (objc != 2) {
+		Tcl_WrongNumArgs(interp, 2, objv, "");
+		return TCL_ERROR;
+	}
+	
+	if (rawPV.type != aitEnumEnum16) {
+		Tcl_SetObjResult(interp, Tcl_NewStringObj("Process variable is not an enum", -1));
+		return TCL_ERROR;
+	}
+
+	aitEnum16 ind;
+	rawPV.data->get(ind);
+
+	if (ind < rawPV.enumstrings.size()) {
+		Tcl_SetObjResult(interp, NewTclObj(rawPV.enumstrings[ind]));
+		return TCL_OK;
+	}
+	/* index too large - return as an int */
+
+	Tcl_SetObjResult(interp, NewTclObj(ind));
+	return TCL_OK;
+
+}
+
+int AsynPV::enumstrings_(int objc, Tcl_Obj * const objv[]) {
+	if (objc != 2 && objc != 3) {
+		Tcl_WrongNumArgs(interp, 2, objv, "?values?");
+		return TCL_ERROR;
+	}
+
+	if (rawPV.type != aitEnumEnum16) {
+		Tcl_SetObjResult(interp, Tcl_NewStringObj("Process variable is not an enum", -1));
+		return TCL_ERROR;
+	}
+	
+	/* return the list of states */
+	if (objc == 2) {
+		Tcl_Obj *result = Tcl_NewObj();
+		for (const auto &str : rawPV.enumstrings) {
+			Tcl_ListObjAppendElement(NULL, result, NewTclObj(str));
+		}
+		Tcl_SetObjResult(interp, result);
+		return TCL_OK;
+	}
+
+	/* set the list of states */
+	int N; Tcl_Obj **el;
+	if (Tcl_ListObjGetElements(interp, objv[2], &N, &el) != TCL_OK) {
+		/* List couldn't be parsed */
+		return TCL_ERROR;
+	}
+
+	if (N >  MAX_ENUM_STATES) {
+		Tcl_SetObjResult(interp, Tcl_ObjPrintf("Too many enum states (%d), only %d allowed", N, MAX_ENUM_STATES));
+		return TCL_ERROR;
+	}
+
+	std::vector<std::string> newstrings;
+	std::unordered_map<std::string, aitEnum16> newmap;
+	
+	for (int i=0; i<N; i++) {
+		int length;
+		char *bytes = Tcl_GetStringFromObj(el[i], &length);
+		if (length >  MAX_ENUM_STRING_SIZE) {
+			Tcl_SetObjResult(interp, 
+				Tcl_ObjPrintf("Enum string >%s< too long (%d chars), only %d allowed", 
+				bytes, length, MAX_ENUM_STRING_SIZE));
+			
+			return TCL_ERROR;
+		}
+
+		std::string key = std::string(bytes, length);
+		newstrings.push_back(key);
+		/* check if this key is already there */
+		if (newmap.find(key) != newmap.end()) {
+			Tcl_SetObjResult(interp, Tcl_ObjPrintf("Duplicate keys >%s< in enum state list at position %d and %d",
+				key.c_str(), newmap[key], i));
+			return TCL_ERROR;
+		}
+
+		newmap[key] = i;
+	}
+
+	rawPV.enumstrings = newstrings;
+	rawPV.enummap = newmap;
+
+	return TCL_OK;
+
 }
 
 void AsynPV::postUpdateEvent() {
@@ -398,7 +415,7 @@ void AsynPV::postUpdateEvent() {
 }
 
 
-int AsynPV::name(int objc, Tcl_Obj * const objv[]) {
+int AsynPV::name_(int objc, Tcl_Obj * const objv[]) {
 	if (objc != 2) {
 		Tcl_WrongNumArgs(interp, 2, objv, "");
 		return TCL_ERROR;
@@ -446,36 +463,42 @@ int AsynPV::commandfun(int objc, Tcl_Obj * const objv[], Tcl_Obj *& prefix) {
 	return TCL_OK;
 }
 
-int AsynPV::readcommand(int objc, Tcl_Obj * const objv[]) {
+int AsynPV::readcommand_(int objc, Tcl_Obj * const objv[]) {
 	return commandfun(objc, objv, readCmdPrefix);
 }
 
-int AsynPV::writecommand(int objc, Tcl_Obj * const objv[]) {
+int AsynPV::writecommand_(int objc, Tcl_Obj * const objv[]) {
 	return commandfun(objc, objv, writeCmdPrefix);
 }
 
-int AsynPV::lowlimit(int objc, Tcl_Obj * const objv[]) {
+int AsynPV::lowlimit_(int objc, Tcl_Obj * const objv[]) {
 	return property(interp, objc, objv, rawPV.lowlimit, "?limit?");
 }
 
-int AsynPV::highlimit(int objc, Tcl_Obj * const objv[]) {
+int AsynPV::highlimit_(int objc, Tcl_Obj * const objv[]) {
 	return property(interp, objc, objv, rawPV.highlimit, "?limit?");
 }
 
-int AsynPV::precision(int objc, Tcl_Obj * const objv[]) {
+int AsynPV::precision_(int objc, Tcl_Obj * const objv[]) {
 	return property(interp, objc, objv, rawPV.precision, "?digits?");
 }
 
-int AsynPV::units(int objc, Tcl_Obj * const objv[]) {
+int AsynPV::units_(int objc, Tcl_Obj * const objv[]) {
 	return property(interp, objc, objv, rawPV.units, "?units?");
 }
 
 AsynCasPV::AsynCasPV(AsynPV &asynPV, std::string PVname, aitEnum type, unsigned int count) :
 	asynPV(asynPV), PVname(PVname), type(type), count(count), 
-	lowlimit(0.0), highlimit(10.0), precision(6), units("mm") 
+	lowlimit(0.0), highlimit(10.0), precision(6), units("mm"), enumstrings(0)
 {
 	data = new gddScalar(gddAppType_value, type);
 	/*data->put(3.14159);*/
+	if (type == aitEnumEnum16) {
+		/* fake enum states */
+		enumstrings.push_back("On");
+		enumstrings.push_back("Off");
+		enumstrings.push_back("Tri-state");
+	}
 }
 
 
@@ -536,23 +559,44 @@ caStatus AsynCasPV::getUnits( gdd & unitstring )
     return S_cas_success;
 }
 
-//
-// exPV::getEnums()
-//
+
+class aitFixedStringDestructor: public gddDestructor {
+    virtual void run (void *);
+};
+
+void aitFixedStringDestructor::run ( void * pUntyped )
+{
+    aitFixedString *ps = (aitFixedString *) pUntyped;
+    delete [] ps;
+}
+
 // returns the eneumerated state strings
 // for a discrete channel
-//
-// The PVs in this example are purely analog,
-// and therefore this isnt appropriate in an
-// analog context ...
-//
 caStatus AsynCasPV::getEnums ( gdd & enumsIn )
 {
-    if ( type == aitEnumEnum16 ) {
-        return S_cas_success;
-    }
+	if ( type != aitEnumEnum16 || enumstrings.size() == 0 ) {
+		/* for non-enums, it makes no sense 
+		 * retur success also if no strings are defined */
+		return S_cas_success;
+	}
 
-    return S_cas_success;
+	int N = enumstrings.size();
+	
+	aitFixedString *str;
+	aitFixedStringDestructor *des;
+
+	str = new aitFixedString[N];
+	des = new aitFixedStringDestructor;
+
+	for (int i=0; i<N; i++) {
+		strncpy (str[i].fixed_string, enumstrings[i].c_str(), sizeof(str[i].fixed_string));
+	}
+	
+	enumsIn.setDimension(1);
+	enumsIn.setBound (0,0,N);
+	enumsIn.putRef (str, des);
+	
+	return S_cas_success;
 }
 
 caStatus AsynCasPV::getValue ( gdd & value )
@@ -639,6 +683,107 @@ caStatus AsynCasPV::write ( const casCtx &ctx, const gdd & valueIn )
 	}
 }
 
+int AsynCasPV::putTclObj(Tcl_Interp *interp, Tcl_Obj *value) {
+	/* Try to convert the Tcl_Obj into the data type of the gdd.
+	 * Return a Tcl success code */
+	
+	if (data->dimension() != 0) {
+		if (interp)
+			Tcl_SetObjResult(interp, Tcl_ObjPrintf("Unimplemented vector put for %d items, must be 1", data->dimension()));
+		return TCL_ERROR;
+	}
+
+	switch (data->primitiveType()) {
+		case aitEnumFloat64:
+		case aitEnumFloat32: {
+			double d;
+			if (Tcl_GetDoubleFromObj(interp, value, &d) != TCL_OK) {
+				return TCL_ERROR;
+			}
+			/* finally put it and update the time stamp */
+			data->putConvert(d);
+			
+			break;
+		}
+		
+		#define INTVALCONV(AITENUM, AITYPE) \
+			case AITENUM: { \
+							 Tcl_WideInt val;\
+							 if (Tcl_GetWideIntFromObj(interp, value, &val) != TCL_OK) {\
+								 return TCL_ERROR;\
+							 }\
+							 AITYPE tval = val;\
+							 \
+							 if (tval != val) {\
+								 /* value doesn't fit */\
+								if (interp) \
+									Tcl_SetObjResult(interp, Tcl_NewStringObj("Value outside range for type " STRINGIFY(AITYPE), -1));\
+								 return TCL_ERROR;\
+							 }\
+							 data->put(tval); \
+							 break; \
+						 }
+
+		INTVALCONV(aitEnumUint8, aitUint8)
+		INTVALCONV(aitEnumInt8, aitInt8)
+		INTVALCONV(aitEnumUint16, aitUint16)
+		INTVALCONV(aitEnumInt16, aitInt16)
+		INTVALCONV(aitEnumUint32, aitUint32)
+		INTVALCONV(aitEnumInt32, aitInt32)
+		
+#undef INTVALCONV
+		case aitEnumFixedString: {
+			int len;
+			const char *bytes = Tcl_GetStringFromObj(value, &len);
+			const int maxlen = sizeof(aitFixedString);
+			if (len > maxlen) {
+				if (interp)
+					Tcl_SetObjResult(interp, Tcl_ObjPrintf("String too long (%d bytes), max %d bytes allowed", len, maxlen));
+				return TCL_ERROR;
+			}
+			
+			
+			data->putConvert(bytes);
+			break;
+		}
+
+		case aitEnumEnum16: {
+		
+			auto it = enummap.find(Tcl_GetString(value));
+			/* fails with embedded NULL character, but this is not allowed either */
+			if (it != enummap.end()) {
+				data->putConvert(it->second);
+			} else {
+				int index;
+				if (Tcl_GetIntFromObj(interp, value, &index) != TCL_OK) {
+					if (interp)
+						Tcl_SetObjResult(interp, Tcl_ObjPrintf(">%s< is not a valid enum state", Tcl_GetString(value)));
+					return TCL_ERROR;
+				}
+				if (index < 0 || index > MAX_ENUM_STATES) {
+					if (interp)
+						Tcl_SetObjResult(interp, Tcl_ObjPrintf("Enum state %d out of range", index));
+					return TCL_ERROR;
+				}
+
+				data->putConvert(index);
+			}
+
+			break;
+		}
+
+		default: {
+			if (interp)
+				Tcl_SetObjResult(interp, Tcl_ObjPrintf("Unimplemented data type %d", data->primitiveType()));
+			return TCL_ERROR;
+		}
+	}
+
+	aitTimeStamp gddts(epicsTime::getCurrent());
+	data->setTimeStamp(&gddts);
+	return TCL_OK;
+}
+
 AsynCARawReadRequest::AsynCARawReadRequest(AsynCAReadRequest &boxedrequest, const casCtx & ctx) :
 	casAsyncReadIO(ctx), boxedrequest(boxedrequest), completed(false) 
 {	}
@@ -671,7 +816,7 @@ AsynCAReadRequest::~AsynCAReadRequest () {
 	}
 }
 
-TCLCLASSIMPLEMENTEXPLICIT(AsynCAReadRequest, return_);
+TCLCLASSIMPLEMENTEXPLICIT(AsynCAReadRequest, return);
 
 int AsynCAReadRequest::return_ (int objc, Tcl_Obj *const objv[]) {
 	int code;
@@ -681,7 +826,7 @@ int AsynCAReadRequest::return_ (int objc, Tcl_Obj *const objv[]) {
 			code = TCL_ERROR;
 			rawRequest->postIOCompletion(S_casApp_canceledAsyncIO, *pv.rawPV.data);
 		} else {
-			code = GetGddFromTclObj(interp, objv[2], *pv.rawPV.data);
+			code = pv.rawPV.putTclObj(interp, objv[2]);
 			if (code == TCL_OK) {
 				/* signal successful completion and 
 				 * return value to EPICS client */
@@ -767,7 +912,7 @@ AsynCARawWriteRequest::~AsynCARawWriteRequest() {
 }
 
 
-TCLCLASSIMPLEMENTEXPLICIT(AsynCAWriteRequest, value, return_);
+TCLCLASSIMPLEMENTEXPLICIT(AsynCAWriteRequest, value, return);
 
 AsynCAWriteRequest::AsynCAWriteRequest (AsynPV & pv, const casCtx & ctx, const gdd & gddvalue) :
 	pv (pv), completed(false), data (NewTclObjFromGdd(gddvalue))
@@ -789,7 +934,7 @@ AsynCAWriteRequest::~AsynCAWriteRequest () {
 	Tcl_DecrRefCount(data);
 }
 
-int AsynCAWriteRequest::value (int objc, Tcl_Obj *const objv[])
+int AsynCAWriteRequest::value_ (int objc, Tcl_Obj *const objv[])
 {
 	Tcl_SetObjResult(interp, data);
 	return TCL_OK;
