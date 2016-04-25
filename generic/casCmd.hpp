@@ -65,6 +65,7 @@ class AsynPV;
 class AsynServer : public TclClass, public caServer {
 public:
 	Tcl_ThreadId mainid;
+	Tcl_ThreadId epicsloopid;
 	std::unordered_map<std::string, AsynPV*> PVs;
 	bool alive;
 	

@@ -10,37 +10,24 @@
 
 int startServerCmd(ClientData clientData, Tcl_Interp *interp, int objc, Tcl_Obj * const objv[]) {
 
-	/* Start thread with the EPICS event loop */
-	static Tcl_ThreadId id = NULL;    /* holds identity of thread created */
 
 	int code = AsynServerCreateCmd(clientData, interp, objc, objv);
 	AsynCasPV::initFT(); /* initialize dispatch table */
 	
 	if (code != TCL_OK) { return TCL_ERROR; }
 
-	/* Run a singleton EPICS event thread, if the first server is started */
-	if (id == NULL) {
-		if (Tcl_CreateThread(&id, EpicsEventLoop, static_cast<ClientData>(NULL),
-					TCL_THREAD_STACK_DEFAULT,
-					TCL_THREAD_NOFLAGS) != TCL_OK) {
-			/* Thread did not create correctly */
-			Tcl_SetObjResult(interp, Tcl_NewStringObj("Couldn't initialize EPICS event loop", -1));
-			return TCL_ERROR;
-		}
-	}
-	/* All cleaned up nicely */
-
 	return TCL_OK;
 }
 
 static Tcl_ThreadCreateType EpicsEventLoop (ClientData clientData)
 {
-	//Tcl_ThreadId mainid = static_cast<Tcl_ThreadId> (clientData);
+	AsynServer * server = static_cast<AsynServer *> (clientData);
 	/* Run epics select loop */
 	fileDescriptorManager.process(1.0);
-	while (true) {
+	while (server->alive) {
 		// printf("Boing \n");
 		fileDescriptorManager.process(100.0);
+		if (! server->alive) break;
 	}
 	TCL_THREAD_CREATE_RETURN;
 }
@@ -107,8 +94,13 @@ wakeupEpicsLoopFD::wakeupEpicsLoopFD() :
 
 void wakeupEpicsLoopFD::callBack() {
 	char msg;
-	read(readfd, &msg, 1);
-	//printf("Loop woken up: %c\n", msg);
+	int bytesread = read(readfd, &msg, 1);
+	if (bytesread == 1 && msg == 'x') {
+		/* terminal signal sent */
+		printf("Loop asked to terminate: %c\n", msg);
+		/* finishEpicsThread = true; 
+		 * done in the server */
+	}
 }
 
 void wakeupEpicsLoopFD::send(char msg) {
@@ -129,26 +121,32 @@ AsynServer::AsynServer(ClientData cdata, Tcl_Interp *interp, int objc, Tcl_Obj *
 	mainid = Tcl_GetCurrentThread();
 	//setDebugLevel(10);
 	alertfd = new wakeupEpicsLoopFD();
-#if 0
-	/* run an event loop for 10s */
-	for (int t=0; t<10; t++) {
-		fileDescriptorManager.process(1000.0);
-		printf("Boing \n");
+	
+	/* Start thread with the EPICS event loop */
+	if (Tcl_CreateThread(&epicsloopid, EpicsEventLoop, static_cast<ClientData>(this),
+				TCL_THREAD_STACK_DEFAULT,
+				TCL_THREAD_JOINABLE) != TCL_OK) {
+		/* Thread did not create correctly */
+		Tcl_SetObjResult(interp, Tcl_NewStringObj("Couldn't initialize EPICS event loop", -1));
+		throw(TCL_ERROR);
 	}
-#endif
 }	
 
 AsynServer::~AsynServer() { 
+	printf("AsynServer dying!\n"); 
 	/* destroy all PVs from the map */
 	alive = false;
 	for (auto &p: PVs) {
 		delete p.second;
 	}
 	
-	/* wake up the notifier to inform that the PVs are gone */
-	wakeup();
+	/* wake up the notifier and wait until it is finished */
+	alertfd->send('x');
+	int resultcode;
+	Tcl_JoinThread(epicsloopid, &resultcode);
+
 	delete alertfd;
-	printf("AsynServer dying!\n"); 
+	printf("AsynServer dead!\n"); 
 }
 
 
@@ -277,7 +275,7 @@ pvAttachReturn AsynServer::pvAttach(const casCtx &, const char * pPVName ) {
 }
 
 void  AsynServer::wakeup() {
-	alertfd->send();
+	alertfd->send('w');
 }
 
 TCLCLASSIMPLEMENTEXPLICIT(AsynPV, name, read, write, readenum, enumstrings, readcommand, writecommand, lowlimit, highlimit, precision, units);
