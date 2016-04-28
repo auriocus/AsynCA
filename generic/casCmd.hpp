@@ -20,6 +20,7 @@
 #include <unordered_map>
 #include <string>
 #include <vector>
+#include <atomic>
 
 
 
@@ -35,6 +36,31 @@ static inline void DecrIfNotNull(Tcl_Obj*& o) {
 		o=NULL;
 	}
 }
+
+
+class Mutex {
+	Tcl_Mutex mutex;
+public:
+	Mutex() : mutex(nullptr) { }
+	~Mutex() { Tcl_MutexFinalize(&mutex); }
+	
+	void lock() { Tcl_MutexLock(&mutex); }
+	void unlock() { Tcl_MutexUnlock(&mutex); }
+	
+};
+
+// like std::lock_guard that operates on a Tcl_Mutex
+class LockGuard {
+	Mutex & mutex;
+public:
+	LockGuard(Mutex &mutex) : mutex(mutex) {
+		mutex.lock();
+	}
+	
+	~LockGuard() {
+		mutex.unlock();
+	}
+};
 
 //static int GetGddFromTclObj(Tcl_Interp *interp, Tcl_Obj *value, gdd & storage);
 static Tcl_Obj* NewTclObjFromGdd(const gdd & value);
@@ -66,10 +92,15 @@ class AsynServer : public TclClass, public caServer {
 public:
 	Tcl_ThreadId mainid;
 	Tcl_ThreadId epicsloopid;
-	std::unordered_map<std::string, AsynPV*> PVs;
-	bool alive;
 	
-    AsynServer (ClientData cdata, Tcl_Interp *interp, int objc, Tcl_Obj * const objv[]);
+	Mutex PVTableMutex;
+	std::unordered_map<std::string, AsynPV*> PVs;
+	
+	std::atomic_bool alive;
+
+	
+    
+	AsynServer (ClientData cdata, Tcl_Interp *interp, int objc, Tcl_Obj * const objv[]);
     ~AsynServer();
 
 	// Tcl interface functions
@@ -186,7 +217,6 @@ public:
 
 TCLCLASSDECLAREEXPLICIT(AsynPV)
 
-TCL_DECLARE_MUTEX(CmdMutex);
 
 inline Tcl_Obj* NewTclObj(double value) { return Tcl_NewDoubleObj(value); }
 inline Tcl_Obj* NewTclObj(int value) { return Tcl_NewWideIntObj(value); }
@@ -224,13 +254,9 @@ int property(Tcl_Interp *interp, int objc, Tcl_Obj * const objv[], CType & prop,
 		return TCL_ERROR;
 	}
 
-	Tcl_MutexLock(&CmdMutex);
-	
 	/* get value  */
 	if (objc == 2) {
 		Tcl_SetObjResult(interp, NewTclObj(prop));
-
-		Tcl_MutexUnlock(&CmdMutex);
 		return TCL_OK;
 	}
 
@@ -238,7 +264,6 @@ int property(Tcl_Interp *interp, int objc, Tcl_Obj * const objv[], CType & prop,
 	Tcl_Obj *value = objv[2];
 	
 	int code = FromTclObj<CType>(interp, value, prop);
-	Tcl_MutexUnlock(&CmdMutex);
 	return code;
 }
 

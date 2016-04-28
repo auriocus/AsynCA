@@ -3,7 +3,7 @@
  */
 
 #include "casCmd.hpp"
-
+using std::vector;
 
 /* Create a new process variable object and return it
  * The callback is invoked for every change of the connection status */
@@ -134,16 +134,21 @@ AsynServer::AsynServer(ClientData cdata, Tcl_Interp *interp, int objc, Tcl_Obj *
 
 AsynServer::~AsynServer() { 
 	printf("AsynServer dying!\n"); 
-	/* destroy all PVs from the map */
+	
 	alive = false;
-	for (auto &p: PVs) {
-		delete p.second;
-	}
 	
 	/* wake up the notifier and wait until it is finished */
 	alertfd->send('x');
 	int resultcode;
 	Tcl_JoinThread(epicsloopid, &resultcode);
+	
+	/* destroy all PVs from the map */
+	{
+		LockGuard lck(PVTableMutex);
+		for (auto &p: PVs) {
+			delete p.second;
+		}
+	}
 
 	delete alertfd;
 	printf("AsynServer dead!\n"); 
@@ -179,6 +184,8 @@ int AsynServer::createPV_(int objc, Tcl_Obj * const objv[]) {
 		return TCL_ERROR;
 	}
 	std::string name = Tcl_GetString(objv[2]);
+
+	LockGuard lck(PVTableMutex);
 	/* check that this PV does not yet exist */
 	if (PVs.find(name) != PVs.end()) {
 		Tcl_SetObjResult(interp, Tcl_ObjPrintf("Process variable %s already exists in this server", name.c_str()));
@@ -221,6 +228,7 @@ int AsynServer::findPV_(int objc, Tcl_Obj * const objv[]) {
 		return TCL_ERROR;
 	}
 
+	LockGuard lck(PVTableMutex);
 	auto pvit = PVs.find(std::string(Tcl_GetString(objv[1])));
 	if (pvit != PVs.end()) {
 		Tcl_SetObjResult(interp, string2Tcl(pvit->second->getName()));
@@ -229,6 +237,7 @@ int AsynServer::findPV_(int objc, Tcl_Obj * const objv[]) {
 }
 
 int AsynServer::listPV_(int objc, Tcl_Obj * const objv[]) {
+	LockGuard lck(PVTableMutex);
 	/* return all PVs as Tcl objects */
 	Tcl_Obj *result = Tcl_NewObj();
 	for (auto& p: PVs) {
@@ -241,6 +250,7 @@ int AsynServer::listPV_(int objc, Tcl_Obj * const objv[]) {
 
 void AsynServer::removePV(std::string name) {
 	if (alive) {
+		LockGuard lck(PVTableMutex);
 		PVs.erase(name);
 	}
 }
@@ -257,6 +267,7 @@ pvExistReturn AsynServer::pvExistTest (const casCtx & ctx, const caNetAddr &, co
 pvExistReturn AsynServer::pvExistTest
     ( const casCtx& ctxIn, const char * pPVName )
 {
+	LockGuard lck(PVTableMutex);
    	auto pvit = PVs.find(pPVName);
 	if (pvit == PVs.end()) {
         return pverDoesNotExistHere;
@@ -266,6 +277,7 @@ pvExistReturn AsynServer::pvExistTest
 }
 
 pvAttachReturn AsynServer::pvAttach(const casCtx &, const char * pPVName ) {
+	LockGuard lck(PVTableMutex);
 	auto pvit = PVs.find(pPVName);
 	if (pvit == PVs.end()) {
         return S_casApp_pvNotFound;
@@ -422,6 +434,7 @@ int AsynPV::name_(int objc, Tcl_Obj * const objv[]) {
 	return TCL_OK;
 }
 
+Mutex CmdMutex;
 
 int AsynPV::commandfun(int objc, Tcl_Obj * const objv[], Tcl_Obj *& prefix) {
 	if (objc != 2 && objc != 3) {
@@ -429,7 +442,7 @@ int AsynPV::commandfun(int objc, Tcl_Obj * const objv[], Tcl_Obj *& prefix) {
 		return TCL_ERROR;
 	}
 
-	Tcl_MutexLock(&CmdMutex);
+	LockGuard lck(CmdMutex);
 	
 	/* get callback for asynchronously reading the PV */
 	if (objc == 2) {
@@ -437,7 +450,6 @@ int AsynPV::commandfun(int objc, Tcl_Obj * const objv[], Tcl_Obj *& prefix) {
 			Tcl_SetObjResult(interp, prefix);
 		}
 
-		Tcl_MutexUnlock(&CmdMutex);
 		return TCL_OK;
 	}
 
@@ -457,7 +469,6 @@ int AsynPV::commandfun(int objc, Tcl_Obj * const objv[], Tcl_Obj *& prefix) {
 		prefix = script;
 	}
 
-	Tcl_MutexUnlock(&CmdMutex);
 	return TCL_OK;
 }
 
@@ -489,7 +500,14 @@ AsynCasPV::AsynCasPV(AsynPV &asynPV, std::string PVname, aitEnum type, unsigned 
 	asynPV(asynPV), PVname(PVname), type(type), count(count), 
 	lowlimit(0.0), highlimit(10.0), precision(6), units("mm"), enumstrings(0)
 {
-	data = new gddScalar(gddAppType_value, type);
+	if (count==1) {
+		data = new gddScalar(gddAppType_value, type);
+	} else {
+		aitUint32 N = count;
+		aitUint32 *sizes = &N;
+		data = new gddArray(gddAppType_value, type, 1, sizes);
+	}
+
 	/*data->put(3.14159);*/
 	if (type == aitEnumEnum16) {
 		/* fake enum states */
@@ -630,7 +648,7 @@ caStatus AsynCasPV::read ( const casCtx & ctx, gdd & protoIn )
 {
 	/* check if this needs to be completed asynchronously */
 	if (asynPV.readCmdPrefix) {
-		Tcl_MutexLock(&CmdMutex);
+		LockGuard lck(CmdMutex);
 		/* construct an asynchronous read object */
 		AsynCAReadRequest *request = new AsynCAReadRequest(asynPV, ctx, protoIn);
 		/* schedule an event to create the alias in the Tcl thread
@@ -643,7 +661,6 @@ caStatus AsynCasPV::read ( const casCtx & ctx, gdd & protoIn )
 		Tcl_ThreadQueueEvent(asynPV.server.mainid, (Tcl_Event*)ev, TCL_QUEUE_TAIL);
 		Tcl_ThreadAlert(asynPV.server.mainid);
 
-		Tcl_MutexUnlock(&CmdMutex);
 		return S_casApp_asyncCompletion;	
 	} else {
 		/* synchronous execution */
@@ -655,7 +672,7 @@ caStatus AsynCasPV::write ( const casCtx &ctx, const gdd & valueIn )
 {	
 	/* check if this needs to be completed asynchronously */
 	if (asynPV.writeCmdPrefix) {
-		Tcl_MutexLock(&CmdMutex);
+		LockGuard lck(CmdMutex);
 		/* construct an asynchronous read object */
 		AsynCAWriteRequest *request = new AsynCAWriteRequest(asynPV, ctx, valueIn);
 		/* schedule an event to create the alias in the Tcl thread
@@ -668,7 +685,6 @@ caStatus AsynCasPV::write ( const casCtx &ctx, const gdd & valueIn )
 		Tcl_ThreadQueueEvent(asynPV.server.mainid, (Tcl_Event*)ev, TCL_QUEUE_TAIL);
 		Tcl_ThreadAlert(asynPV.server.mainid);
 
-		Tcl_MutexUnlock(&CmdMutex);
 		return S_casApp_asyncCompletion;	
 	} else {
 		/* Synchronous operation 
@@ -685,22 +701,55 @@ int AsynCasPV::putTclObj(Tcl_Interp *interp, Tcl_Obj *value) {
 	/* Try to convert the Tcl_Obj into the data type of the gdd.
 	 * Return a Tcl success code */
 	
-	if (data->dimension() != 0) {
+/*	if (data->dimension() != 0) {
 		if (interp)
 			Tcl_SetObjResult(interp, Tcl_ObjPrintf("Unimplemented vector put for %d items, must be 1", data->dimension()));
 		return TCL_ERROR;
+	} */
+
+	/* determine number of elements */
+	
+	bool scalar = (data->dimension() == 0);
+	aitIndex count=1;
+	if (!scalar) {
+		aitIndex first;
+		data->getBound(0, first, count);
 	}
+	
 
 	switch (data->primitiveType()) {
 		case aitEnumFloat64:
 		case aitEnumFloat32: {
-			double d;
-			if (Tcl_GetDoubleFromObj(interp, value, &d) != TCL_OK) {
-				return TCL_ERROR;
+			if (data->dimension() == 0) {
+				/* scalar floating point value */
+				double d;
+				if (Tcl_GetDoubleFromObj(interp, value, &d) != TCL_OK) {
+					return TCL_ERROR;
+				}
+				/* finally put it and update the time stamp */
+				data->putConvert(d);
+			} else {
+				/* vector of floats */
+				vector<double> storage(count);
+				int N; Tcl_Obj **el;
+				if (Tcl_ListObjGetElements(interp, value, &N, &el) != TCL_OK) {
+					return TCL_ERROR;
+				}
+				
+				if (N != count) {
+					Tcl_SetObjResult(interp, 
+						Tcl_ObjPrintf("Element count mismatch in vector put: expected %d items, received %d", count, N ));
+					return TCL_ERROR;
+				}
+
+				for (int i=0; i<N; i++) {
+					if (Tcl_GetDoubleFromObj(interp, el[i], &storage[i]) != TCL_OK) {
+						return TCL_ERROR;
+					}
+				}
+				data->put(&storage[0]);
+
 			}
-			/* finally put it and update the time stamp */
-			data->putConvert(d);
-			
 			break;
 		}
 		
