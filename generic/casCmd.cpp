@@ -34,37 +34,106 @@ static Tcl_ThreadCreateType EpicsEventLoop (ClientData clientData)
 
 /* Convert the gdd object into an equivalent Tcl object */
 static Tcl_Obj* NewTclObjFromGdd(const gdd & value) {
-	if (value.dimension() != 0) {
-		return	Tcl_ObjPrintf("Unimplemented vector data with %d items, must be 1", value.dimension());
-	}
+	if (value.dimension() == 0) {
+		/* Scalar values */
+		switch (value.primitiveType()) {
+			/* floating point types */
+			case aitEnumFloat64:
+			case aitEnumFloat32: {
+				aitFloat64 val;
+				value.getConvert(val);
+				return Tcl_NewDoubleObj(val);
+			}
+			/* integer types, all are simply converted to Tcl_WideInt*/
+			case aitEnumEnum16:
+			case aitEnumInt8:
+			case aitEnumUint8:
+			case aitEnumInt16:
+			case aitEnumUint16:
+			case aitEnumInt32:
+			{
+				aitInt32 val;
+				value.getConvert(val);
+				return Tcl_NewWideIntObj(val);
+			}
+			case aitEnumUint32: {
+				aitUint32 val;
+				value.getConvert(val);
+				return Tcl_NewWideIntObj(val);
+			}
+			case aitEnumFixedString: {
+				aitFixedString str;
+				value.getConvert(str);
+				/* for safety set the last char to 0 */
+				str.fixed_string[sizeof(str)-1]='\0';
+				return Tcl_NewStringObj(str.fixed_string, -1);
+			}
 
-	switch (value.primitiveType()) {
-		/* floating point types */
-		case aitEnumFloat64:
-		case aitEnumFloat32: {
-			aitFloat64 val;
-			value.getConvert(val);
-			return Tcl_NewDoubleObj(val);
+			default: {
+				return Tcl_ObjPrintf("Unimplemented data type %d", value.primitiveType());
+			}
+
 		}
-		/* integer types, all are simply converted to Tcl_WideInt*/
-		case aitEnumEnum16:
-		case aitEnumInt8:
-		case aitEnumUint8:
-		case aitEnumInt16:
-		case aitEnumUint16:
-		case aitEnumInt32:
+	} else {
+		/* Vector values */
+		if (value.dimension() != 1) {
+			return Tcl_ObjPrintf("Unimplemented high-dimensional data with  %d dimensions (1 supported)", value.dimension());
+		}
+
+		aitIndex count=1;
 		{
-			aitInt32 val;
-			value.getConvert(val);
-			return Tcl_NewWideIntObj(val);
+			aitIndex first;
+			value.getBound(0, first, count);
 		}
-		case aitEnumUint32: {
-			aitUint32 val;
-			value.getConvert(val);
-			return Tcl_NewWideIntObj(val);
-		}
-		default: {
-			return Tcl_ObjPrintf("Unimplemented data type %d items", value.primitiveType());
+		
+		Tcl_Obj *result = Tcl_NewObj();
+
+		switch (value.primitiveType()) {
+			/* floating point types */
+#define FLOATCONV(TYPE) \
+			case aitEnum ## TYPE: { \
+				const ait ## TYPE *d; \
+				value.getRef(d); \
+				for (int i=0; i<count; i++) { \
+					Tcl_ListObjAppendElement(NULL, result, Tcl_NewDoubleObj(d[i])); \
+				} \
+				return result; \
+			}
+
+			FLOATCONV(Float64)
+			FLOATCONV(Float32)
+#undef FLOATCONV
+
+#define INTCONV(TYPE) \
+			case aitEnum ## TYPE: { \
+				const ait ## TYPE *d; \
+				value.getRef(d); \
+				for (int i=0; i<count; i++) { \
+					Tcl_ListObjAppendElement(NULL, result, Tcl_NewWideIntObj(d[i])); \
+				} \
+				return result; \
+			}
+
+
+			INTCONV(Enum16)
+			INTCONV(Int8)
+			INTCONV(Uint8)
+			INTCONV(Int16)
+			INTCONV(Uint16)
+			INTCONV(Int32)
+			INTCONV(Uint32)
+/*			case aitEnumFixedString: {
+				aitFixedString str;
+				value.getConvert(str);
+				// for safety set the last char to 0 
+				str[sizeof(str)-1]='\0';
+				return Tcl_NewStringObj(str, -1);
+			} */
+
+			default: {
+				return Tcl_ObjPrintf("Unimplemented data type %d", value.primitiveType());
+			}
+
 		}
 
 	}
@@ -701,12 +770,6 @@ int AsynCasPV::putTclObj(Tcl_Interp *interp, Tcl_Obj *value) {
 	/* Try to convert the Tcl_Obj into the data type of the gdd.
 	 * Return a Tcl success code */
 	
-/*	if (data->dimension() != 0) {
-		if (interp)
-			Tcl_SetObjResult(interp, Tcl_ObjPrintf("Unimplemented vector put for %d items, must be 1", data->dimension()));
-		return TCL_ERROR;
-	} */
-
 	/* determine number of elements */
 	
 	bool scalar = (data->dimension() == 0);
