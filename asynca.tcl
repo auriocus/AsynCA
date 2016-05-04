@@ -9,9 +9,13 @@ namespace eval ::AsynCA {
 
 		set result {}
 		foreach p $args {
-			set PV [connect $p -command ${ns}::connectcall]
-			dict set managed_PVs $p {}
-			dict set result $p $PV
+			if {[dict exists $managed_PVs $p]} {
+				dict set result $p [dict get $managed_PVs $p]
+			} else {
+				set PV [connect $p -command ${ns}::connectcall]
+				dict set managed_PVs $p {}
+				dict set result $p $PV
+			}
 		}
 
 		while {![allconnected]} {
@@ -58,4 +62,31 @@ namespace eval ::AsynCA {
 		variable pendingwrites
 		dict set pendingwrites $pv 0
 	}
+
+	variable pendingreads {}
+	proc read {args} {
+		variable ns
+		variable pendingreads
+		foreach p $args {
+			$p get -command [list ${ns}::readfinish $p]
+			dict set pendingreads $p {}
+		}
+
+		while {![allreadsfinished]} {
+			vwait ${ns}::pendingreads
+		}
+	
+		dict values $pendingreads
+	}
+
+	proc allreadsfinished {} {
+		variable pendingreads
+		expr {[dict size [dict filter $pendingreads value {}]] == 0}
+	}
+
+	proc readfinish {pv value status} {
+		variable pendingreads
+		dict set pendingreads $pv $value
+	}
+
 }
