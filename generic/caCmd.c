@@ -50,6 +50,14 @@ static int newpvInfo (Tcl_Interp *interp, const char *name, Tcl_Obj *prefix, pvI
 		Tcl_SetObjResult(interp, Tcl_NewStringObj(ca_message(code), -1));
 		return TCL_ERROR;
 	}	
+	
+	/* Create handle */
+	static int pvcounter = 0;
+	char objName[50 + TCL_INTEGER_SPACE];
+	sprintf(objName, "::AsynCA::PV%d", ++pvcounter);
+	result->cmd = Tcl_CreateObjCommand(interp, objName, InstanceCmd, (ClientData) info, DeleteCmd);
+	
+	Tcl_SetObjResult(interp, Tcl_NewStringObj(objName, -1));
 
 	return TCL_OK;
 }
@@ -106,8 +114,12 @@ static int stateHandlerInvoke(Tcl_Event* p, int flags) {
 	pvInfo *info = cev->info;
 	Tcl_Obj *script = Tcl_DuplicateObj(info->connectprefix);
 	Tcl_IncrRefCount(script);
-	/* append name of PV and up/down */
-	int code = Tcl_ListObjAppendElement(info->interp, script, Tcl_NewStringObj(info->name, -1));
+
+	/* append cmd of PV and up/down */
+	Tcl_Obj *cmdname = Tcl_NewObj();
+    Tcl_GetCommandFullName(info->interp, info->cmd, cmdname);
+	
+	int code = Tcl_ListObjAppendElement(info->interp, script, cmdname);
 	if (code != TCL_OK) {
 		goto bgerr;
 	}
@@ -770,7 +782,6 @@ static void monitorHandler(struct event_handler_args args) {
 /* Create a new process variable object and return it
  * The callback is invoked for every change of the connection status */
 static int ConnectCmd(ClientData clientData, Tcl_Interp *interp, int objc, Tcl_Obj *const objv[]) {
-	static int pvcounter = 0; /* thread safe ?? */
 
 	if (objc != 4) {
 		Tcl_WrongNumArgs(interp, 1, objv, "<PV> -command <cmdprefix>");
@@ -796,12 +807,6 @@ static int ConnectCmd(ClientData clientData, Tcl_Interp *interp, int objc, Tcl_O
 		return TCL_ERROR;
 	}
 
-	/* Create object name */
-	char objName[50 + TCL_INTEGER_SPACE];
-	sprintf(objName, "::AsynCA::pv%d", ++pvcounter);
-	Tcl_CreateObjCommand(interp, objName, InstanceCmd, (ClientData) info, DeleteCmd);
-	
-	Tcl_SetObjResult(interp, Tcl_NewStringObj(objName, -1));
 	return TCL_OK;
 }
 

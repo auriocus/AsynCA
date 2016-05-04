@@ -20,6 +20,7 @@ typedef struct {
 	chid id; /* the EPICS connection ID for this channel */
 	
 	const char *name; /* PV name */
+	Tcl_Command cmd;
 	
 	/* Tcl command prefix which is invoked if the connection status changes */
 	Tcl_Obj *connectprefix;
@@ -36,6 +37,7 @@ typedef struct {
 static void freepvInfo(pvInfo *i);
 static int newpvInfo (Tcl_Interp *interp, const char *name, Tcl_Obj *prefix, pvInfo **info);
 static void DeleteCmd(ClientData cdata);
+static int InstanceCmd(ClientData clientData, Tcl_Interp *interp, int objc, Tcl_Obj * const objv[]);
 static int PVeventDeleteProc(Tcl_Event *e, ClientData cdata);
 
 typedef struct {
