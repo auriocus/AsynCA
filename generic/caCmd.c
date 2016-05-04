@@ -28,9 +28,8 @@ static inline void DecrIfNotNull(Tcl_Obj** o) {
 	}
 }
 
-static int newpvInfo (Tcl_Interp *interp, const char *name, Tcl_Obj *prefix, pvInfo **info) {
+static int newpvInfo (Tcl_Interp *interp, const char *name, Tcl_Obj *prefix) {
 	pvInfo *result=ckalloc(sizeof(pvInfo));
-	*info = result;
 	
 	result->interp=interp;
 	result->name=ckstrdup(name);
@@ -41,6 +40,8 @@ static int newpvInfo (Tcl_Interp *interp, const char *name, Tcl_Obj *prefix, pvI
 	result->thrid = Tcl_GetCurrentThread();
 	result->monitorid = 0;
 	result->monitorprefix = NULL;
+	result->nElem = 1;
+	result->type = -1;
 
 	/* connect PV */
 	int code = ca_create_channel(name, stateHandler, result, 0, &(result->id));
@@ -55,7 +56,7 @@ static int newpvInfo (Tcl_Interp *interp, const char *name, Tcl_Obj *prefix, pvI
 	static int pvcounter = 0;
 	char objName[50 + TCL_INTEGER_SPACE];
 	sprintf(objName, "::AsynCA::PV%d", ++pvcounter);
-	result->cmd = Tcl_CreateObjCommand(interp, objName, InstanceCmd, (ClientData) info, DeleteCmd);
+	result->cmd = Tcl_CreateObjCommand(interp, objName, InstanceCmd, (ClientData) result, DeleteCmd);
 	
 	Tcl_SetObjResult(interp, Tcl_NewStringObj(objName, -1));
 
@@ -801,13 +802,8 @@ static int ConnectCmd(ClientData clientData, Tcl_Interp *interp, int objc, Tcl_O
 	const char * pvName = Tcl_GetString(pvNameObj);
 	/* connect PV */
 	
-	pvInfo *info;
-	int code = newpvInfo(interp, pvName, cmdprefix, &info);
-	if (code != TCL_OK) {
-		return TCL_ERROR;
-	}
-
-	return TCL_OK;
+	int code = newpvInfo(interp, pvName, cmdprefix);
+	return code;
 }
 
 static void DeleteCmd(ClientData cdata) {
