@@ -36,7 +36,6 @@ namespace eval ::AsynCA {
 		expr {[dict size [dict filter $managed_PVs value {}]] == 0}
 	}
 
-	
 	variable pendingwrites {}
 	proc putwait {PVs values} {
 		variable ns
@@ -64,7 +63,7 @@ namespace eval ::AsynCA {
 	}
 
 	variable pendingreads {}
-	proc read {args} {
+	proc readmultiple {args} {
 		variable ns
 		variable pendingreads
 		foreach p $args {
@@ -88,5 +87,9 @@ namespace eval ::AsynCA {
 		variable pendingreads
 		dict set pendingreads $pv $value
 	}
-
+		
+	proc read {PV} {
+		# read a single PV synchronously
+		lindex [readmultiple $PV] 0
+	}
 }
