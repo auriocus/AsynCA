@@ -433,7 +433,23 @@ static int GetEpicsValueFromObj(Tcl_Interp *interp, Tcl_Obj *obj, chtype type, l
 				*dbr = vptr;
 				*otype = type;
 				return TCL_OK;
-		   }
+			}
+			case DBR_STRING: {
+				/* if it's not an int, put the value as a string 
+				 * Note: May fail, if an enum string is set to a decimal integer */
+				dbr_string_t *vptr = ckalloc(sizeof(dbr_string_t));
+				int len;
+				char *buf = Tcl_GetStringFromObj(obj, &len);
+				if (len+1 > sizeof(dbr_string_t)) {
+					Tcl_SetObjResult(interp, Tcl_NewStringObj("String too long", -1));
+					return TCL_ERROR;
+				}
+				strncpy(*vptr, buf, len+1);
+				//printf("Putting string %s\n", *vptr);
+				*dbr = vptr;
+				*otype = DBR_STRING;
+				return TCL_OK;
+			}
 			default: {
 				Tcl_SetObjResult(interp, Tcl_NewStringObj("Unsupported data type", -1));
 				return TCL_ERROR;
