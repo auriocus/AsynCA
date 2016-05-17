@@ -75,7 +75,7 @@ namespace eval ::AsynCA {
 			vwait ${ns}::pendingreads
 		}
 	
-		dict values $pendingreads
+		lmap p $args {dict get $pendingreads $p}
 	}
 
 	proc allreadsfinished {} {
