@@ -265,17 +265,27 @@ static int PutCmd(Tcl_Interp *interp, pvInfo *info, int objc, Tcl_Obj * const ob
 	//printf("Data type %d, native %d\n", (int)puttype, (int)(info->type));
 	
 	/* Issue put operation */
-	putEvent *ev = ckalloc(sizeof(putEvent));
-	ev->info = info;
-	ev->putCmdPrefix = cmdprefix;
-	if (cmdprefix) Tcl_IncrRefCount(ev->putCmdPrefix);
-	ev->code = TCL_OK;
-
-	int code = ca_array_put_callback (puttype, info->nElem, info->id, dbr, putHandler, ev);
+	if (callback) {	
+		putEvent *ev = ckalloc(sizeof(putEvent));
+		ev->info = info;
+		ev->putCmdPrefix = cmdprefix;
+		if (cmdprefix) Tcl_IncrRefCount(ev->putCmdPrefix);
+		ev->code = TCL_OK;
+		int code = ca_array_put_callback (puttype, info->nElem, info->id, dbr, putHandler, ev);
+		CACHECKTCL(ckfree(dbr); Tcl_DecrRefCount(ev->putCmdPrefix); ckfree(ev));
+	} else {
+		/* No callback requested. Fire & forget 
+		   BEWARE: There is a slight difference between put_callback and plain put
+		   For instance, a put_callback on a motor.STOP field does NOT cause the motor
+		   to stop. Instead, it waits until the motor arrives. This may as well be a bug 
+		   in the motor record...
+		*/
+		int code = ca_array_put (puttype, info->nElem, info->id, dbr);
+		CACHECKTCL(ckfree(dbr));
+	}
 	
-	CACHECKTCL(ckfree(dbr); Tcl_DecrRefCount(ev->putCmdPrefix); ckfree(ev));
 
-	code = ca_flush_io();
+	int code = ca_flush_io();
 
 	CACHECKTCL(ckfree(dbr));
 
