@@ -105,6 +105,13 @@ AC_DEFUN([AX_EPICS_BASE],
     if test -z "$EPICS_HOST_ARCH"; then
         AC_MSG_ERROR(could not determine EPICS host architecture)
     fi
+	
+	EPICS_LIBDIR="$EPICS_BASE/lib/$EPICS_HOST_ARCH"
+	
+	dnl Example of default-enabled feature
+	AC_ARG_ENABLE([static-epics],
+		AS_HELP_STRING([--enable-static-epics], [Enable static linking of EPICS libraries (default: on)]), 
+		[static_epics=$enableval], [static_epics=yes])
 
     # test basic libraries
     # need to determine OS class first
@@ -113,6 +120,10 @@ AC_DEFUN([AX_EPICS_BASE],
     # need to determine CMPLR_CLASS, which is *hard*, so
     # TODO: remove this hardcoded setting with the correct one from the EPICS configure directory
     EPICS_CMPLR_CLASS=$(ls -1 $EPICS_BASE/include/compiler/)
+
+	# find additional libraries to link 
+	#ARCH_DEP_LDLIBS=`awk '/^\s*ARCH_DEP_LDLIBS/ {$[1]=""; $[2]=""; print}' $EPICS_BASE/config/CONFIG.Host.$EPICS_OS_CLASS`
+
     AC_MSG_CHECKING(for usable EPICS base libraries for $EPICS_OS_CLASS OS ($EPICS_CMPLR_CLASS compiler) and host architecture $EPICS_HOST_ARCH)
 
     succeeded=no
@@ -125,15 +136,22 @@ AC_DEFUN([AX_EPICS_BASE],
     LDFLAGS="$LDFLAGS -L$EPICS_BASE/lib/$EPICS_HOST_ARCH"
     export LDFLAGS
 
-    export LIBS="-lca -lCom"
+	echo "The libraries are $LIBS"
+	if test "x$static_epics" != "xno"; then
+		SLIBS="$EPICS_LIBDIR/libca.a $EPICS_LIBDIR/libCom.a $EPICS_LIBDIR/libcas.a $EPICS_LIBDIR/libgdd.a"
+		export LIBS="$SLIBS $SLIBS $LIBS"
+	else
+		export LIBS="-lca -lCom -lcas -lgdd $LIBS"
+	fi
+
     export LIBS
 
-    AC_LANG_PUSH([C])
+    AC_LANG_PUSH([C++])
         AC_LINK_IFELSE([AC_LANG_PROGRAM(
             [[#include <cadef.h>]],
             [[ca_context_create(ca_enable_preemptive_callback);]])
         ],[succeeded=yes],[succeeded=no])
-    AC_LANG_POP([C])
+    AC_LANG_POP([C++])
 
     if test "$succeeded" != "yes" ; then
         AC_MSG_RESULT([no])
