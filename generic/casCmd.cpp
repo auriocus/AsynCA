@@ -270,7 +270,7 @@ int AsynServer::createPV_(int objc, Tcl_Obj * const objv[]) {
 			return TCL_ERROR;
 		}
 		type = gddTypeTable[typeindex].gddtype;
-		printf("Data type: %d\n", type);
+		// printf("Data type: %d\n", type);
 	}
 	
 	int count = 1;
@@ -688,7 +688,7 @@ caStatus AsynCasPV::getValue ( gdd & value )
 {
 
     gddStatus gdds=value.put(&(*data));
-	gddPrintError(gdds);
+	if (gdds != 0) gddPrintError(gdds);
 
     return S_cas_success;
 }
