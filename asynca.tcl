@@ -8,6 +8,9 @@ namespace eval ::AsynCA {
 		variable managed_PVs
 
 		set result {}
+		
+		foreach p $args { dict set result $p {} }
+
 		foreach p $args {
 			if {[dict exists $managed_PVs $p]} {
 				dict set result $p [dict get $managed_PVs $p]
